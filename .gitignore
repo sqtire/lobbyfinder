@@ -1,0 +1,18 @@
+# deps
+node_modules/
+# next
+.next/
+out/
+# build
+dist/
+# env / secrets
+.env
+.env.*
+!.env.example
+# logs
+*.log
+npm-debug.log*
+# os / editor
+.DS_Store
+.vscode/
+.idea/
