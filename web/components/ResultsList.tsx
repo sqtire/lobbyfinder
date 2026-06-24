@@ -62,8 +62,12 @@ export default function ResultsList({ hits }: { hits: Hit[] }) {
                 {h.match_name || `Match ${h.match_id}`}
               </a>
               <CopyId id={h.match_id} />
-              {h.still_open && <span className="badge open">open</span>}
-              <span className={`badge ${h.source}`}>{h.source}</span>
+              {h.partial && (
+                <span className="badge open" title="Lobby was still open when read — may be incomplete">
+                  partial
+                </span>
+              )}
+              <span className={`badge ${h.source}`}>{h.source === "auto" ? "scan" : h.source}</span>
             </div>
             <div className="hit-meta">
               {h.start_time ? fmtDateTime(h.start_time) : "—"} · found {fmtAgo(h.found_at)}

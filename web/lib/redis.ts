@@ -5,7 +5,7 @@ import { MAX_POOL } from "./types";
 const PREFIX = process.env.KEY_PREFIX?.trim() || "mpf";
 const K = {
   config: `${PREFIX}:config`,
-  live: `${PREFIX}:live`,
+  roll: `${PREFIX}:roll`,
   rescan: `${PREFIX}:rescan`,
   status: `${PREFIX}:status`,
   hits: `${PREFIX}:hits`,
@@ -93,8 +93,8 @@ export async function saveConfig(patch: { target_beatmap_ids?: unknown; enabled?
 }
 
 export async function liveWatermark(): Promise<number> {
-  const live = await getJson<{ watermark: number }>(K.live);
-  return live?.watermark ?? 0;
+  const roll = await getJson<{ cursor: number }>(K.roll);
+  return roll?.cursor ?? 0;
 }
 
 export type StartRescanResult = { ok: true; from_id: number; to_id: number; gap: number } | { ok: false; error: string };

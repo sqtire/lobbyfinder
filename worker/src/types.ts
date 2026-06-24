@@ -43,7 +43,7 @@ export interface AppConfig {
 
 export interface RescanState {
   from_id: number;
-  to_id: number; // snapshot of live watermark when the rescan was requested
+  to_id: number; // snapshot of the rolling cursor when the rescan was requested
   cursor: number; // highest id processed so far (starts at from_id - 1)
   status: "running" | "done" | "cancelled";
   processed: number;
@@ -51,9 +51,13 @@ export interface RescanState {
   finished_at: string | null;
 }
 
-/** Live forward-scan position, persisted so restarts auto-resume. */
-export interface LiveState {
-  watermark: number; // highest match id fully processed by the live front
+/**
+ * Rolling-sweep position, persisted so restarts auto-resume. The cursor trails
+ * the live edge by ~rollDelaySec: every match with id <= cursor has been read
+ * once (at which point it had almost always already closed).
+ */
+export interface RollState {
+  cursor: number; // highest match id processed by the rolling sweep
   initialized: boolean;
   started_at: string;
 }
@@ -79,24 +83,27 @@ export interface Hit {
   start_time: string | null;
   end_time: string | null;
   still_open: boolean;
+  partial: boolean; // true => lobby was still open when read (history may be incomplete)
   found_at: string;
-  source: "live" | "rescan";
+  source: "auto" | "rescan"; // auto = rolling sweep, rescan = on-demand
   games: HitGame[]; // only the games whose beatmap_id is in the pool
 }
 
-/** Telemetry for the public health panel (watermark + health merged). */
+/** Telemetry for the public health panel. */
 export interface Status {
   updated_at: string;
   enabled: boolean;
   pool_size: number;
-  live_watermark: number;
-  newest_seen_id: number | null;
-  last_processed_start_time: string | null;
-  lag_seconds: number | null;
-  caught_up: boolean;
+  roll_cursor: number; // match id the rolling sweep has processed up to
+  newest_seen_id: number | null; // live edge (periodic probe)
+  cursor_start_time: string | null; // start_time of the match at the cursor
+  coverage_delay_seconds: number | null; // age of the lobby at the cursor (~target delay when healthy)
+  target_delay_seconds: number; // configured rollDelaySec
+  behind_seconds: number | null; // how far the cursor lags BEHIND the target boundary (0 = on schedule)
+  parked: boolean; // sweep is sitting at the boundary, waiting for lobbies to age/close
+  on_schedule: boolean; // coverage delay is at/near target (not falling further behind)
   processed_total: number;
   hits_total: number;
-  open_watched: number;
   token_expires_at: string | null;
   rescan: {
     active: boolean;

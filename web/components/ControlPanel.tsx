@@ -148,7 +148,7 @@ export default function ControlPanel({
 
   const filled = pool.filter((s) => s.trim() !== "").length;
   const fromId = Number(rescanFrom.trim());
-  const wm = status?.live_watermark ?? 0;
+  const wm = status?.roll_cursor ?? 0;
   const rescanValid = Number.isInteger(fromId) && fromId > 0 && wm > 0 && fromId <= wm;
   const gap = rescanValid ? wm - fromId + 1 : 0;
   const rescanActive = status?.rescan.active ?? false;
@@ -206,8 +206,8 @@ export default function ControlPanel({
 
       <h2>Rescan from a match ID</h2>
       <p className="hint" style={{ margin: "0 0 10px" }}>
-        Retro-applies the <em>current</em> pool to past lobbies, from this match ID up to the live position — runs
-        alongside live scanning. Use a hit&apos;s <code>#id</code> (copy button on any result) as the start point.
+        Retro-applies the <em>current</em> pool to past lobbies, from this match ID up to where the rolling sweep has
+        reached — runs alongside it. Use a hit&apos;s <code>#id</code> (copy button on any result) as the start point.
       </p>
       <div className="row">
         <input
@@ -232,12 +232,12 @@ export default function ControlPanel({
 
       {rescanFrom && !rescanValid && !rescanActive && (
         <p className="hint" style={{ marginTop: 8, color: "var(--amber)" }}>
-          {wm <= 0 ? "Live scanner has no position yet." : `ID must be between 1 and the live position (#${fmtNum(wm)}).`}
+          {wm <= 0 ? "The rolling sweep has no position yet." : `ID must be between 1 and the rolling cursor (#${fmtNum(wm)}).`}
         </p>
       )}
       {rescanValid && !rescanActive && (
         <p className="hint" style={{ marginTop: 8 }}>
-          ≈ {fmtNum(gap)} matches · est. {fmtDur(gap * RATE_S)} – {fmtDur(gap * RATE_S * 2)} (shared with live scanning)
+          ≈ {fmtNum(gap)} matches · est. {fmtDur(gap * RATE_S)} – {fmtDur(gap * RATE_S * 2)} (shared with the rolling sweep)
         </p>
       )}
       {rescanActive && status && (

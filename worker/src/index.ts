@@ -6,7 +6,10 @@ import type { AppConfig } from "./types.js";
 
 async function main(): Promise<void> {
   console.log("[boot] osu! MP pool scanner (worker) starting");
-  console.log(`[boot] rate=${config.minIntervalMs}ms/req, liveBatch=${config.liveBatch}, rescanBatch=${config.rescanBatch}`);
+  console.log(
+    `[boot] rate=${config.minIntervalMs}ms/req, rollDelay=${config.rollDelaySec}s, ` +
+      `rollBatch=${config.rollBatch}, rescanBatch=${config.rescanBatch}, skipOpen=${config.rollSkipOpen}`
+  );
 
   const scanner = new Scanner();
   await scanner.init();
@@ -31,7 +34,6 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   while (!stopping) {
-    // refresh live config (pool + enabled) on a cadence
     if (Date.now() - lastCfgRefresh >= config.configRefreshMs) {
       cfg = await store.loadConfig();
       lastCfgRefresh = Date.now();
@@ -57,12 +59,13 @@ async function main(): Promise<void> {
       continue;
     }
 
-    // Fully caught up live AND no rescan running => nothing to do; idle briefly.
-    if (!didWork && scanner.isLiveIdle()) {
+    if (!didWork) {
+      // Parked at the delay boundary (or caught up to the live edge) with no
+      // rescan running — wait for lobbies to age before checking again.
       await scanner.flush(cfg);
-      await sleep(config.idleMs);
+      await sleep(config.parkIdleMs);
     }
-    // else: loop immediately; the shared limiter paces actual requests.
+    // else: loop immediately; the shared limiter paces the actual requests.
   }
 }
 

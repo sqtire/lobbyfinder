@@ -18,14 +18,16 @@ export interface Status {
   updated_at: string;
   enabled: boolean;
   pool_size: number;
-  live_watermark: number;
+  roll_cursor: number;
   newest_seen_id: number | null;
-  last_processed_start_time: string | null;
-  lag_seconds: number | null;
-  caught_up: boolean;
+  cursor_start_time: string | null;
+  coverage_delay_seconds: number | null;
+  target_delay_seconds: number;
+  behind_seconds: number | null;
+  parked: boolean;
+  on_schedule: boolean;
   processed_total: number;
   hits_total: number;
-  open_watched: number;
   token_expires_at: string | null;
   rescan: RescanStatus;
   last_error: string | null;
@@ -52,8 +54,9 @@ export interface Hit {
   start_time: string | null;
   end_time: string | null;
   still_open: boolean;
+  partial?: boolean;
   found_at: string;
-  source: "live" | "rescan";
+  source: "auto" | "rescan" | "live"; // "live" kept for hits stored before the rolling rewrite
   games: HitGame[];
 }
 

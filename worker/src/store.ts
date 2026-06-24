@@ -1,6 +1,6 @@
 import { Redis } from "ioredis";
 import { config } from "./config.js";
-import type { AppConfig, LiveState, RescanState, Hit, HitGame, Status, MatchDetail, MatchGame } from "./types.js";
+import type { AppConfig, RollState, RescanState, Hit, HitGame, Status, MatchDetail, MatchGame } from "./types.js";
 
 const redis = new Redis(config.redisUrl, {
   maxRetriesPerRequest: null, // let ioredis keep retrying transient blips
@@ -10,12 +10,11 @@ redis.on("error", (e: Error) => console.error("[redis]", e.message));
 
 const K = {
   config: `${config.keyPrefix}:config`,
-  live: `${config.keyPrefix}:live`,
+  roll: `${config.keyPrefix}:roll`, // rolling-sweep cursor (replaces the old :live)
   rescan: `${config.keyPrefix}:rescan`,
   status: `${config.keyPrefix}:status`,
   hits: `${config.keyPrefix}:hits`, // HASH matchId -> Hit (JSON)
   hitsIdx: `${config.keyPrefix}:hits:idx`, // ZSET matchId scored by start_time epoch
-  watch: `${config.keyPrefix}:watch`, // HASH matchId -> firstSeen epoch
 };
 
 const beatmapUrl = (id: number) => `https://osu.ppy.sh/b/${id}`;
@@ -51,13 +50,13 @@ export async function loadConfig(): Promise<AppConfig> {
   };
 }
 
-// ---- live state ----
+// ---- rolling-sweep state ----
 
-export async function loadLiveState(): Promise<LiveState | null> {
-  return getJson<LiveState>(K.live);
+export async function loadRollState(): Promise<RollState | null> {
+  return getJson<RollState>(K.roll);
 }
-export async function saveLiveState(s: LiveState): Promise<void> {
-  await setJson(K.live, s);
+export async function saveRollState(s: RollState): Promise<void> {
+  await setJson(K.roll, s);
 }
 
 // ---- rescan state ----
@@ -71,7 +70,12 @@ export async function saveRescan(s: RescanState): Promise<void> {
 
 // ---- hits ----
 
-export async function upsertHit(detail: MatchDetail, hitGames: MatchGame[], source: "live" | "rescan"): Promise<void> {
+export async function upsertHit(
+  detail: MatchDetail,
+  hitGames: MatchGame[],
+  source: "auto" | "rescan",
+  partial: boolean
+): Promise<void> {
   const m = detail.match;
   const games: HitGame[] = hitGames.map((g) => ({
     game_id: g.id,
@@ -93,6 +97,7 @@ export async function upsertHit(detail: MatchDetail, hitGames: MatchGame[], sour
     start_time: m.start_time,
     end_time: m.end_time,
     still_open: m.end_time === null,
+    partial,
     found_at: new Date().toISOString(),
     source,
     games,
@@ -103,38 +108,6 @@ export async function upsertHit(detail: MatchDetail, hitGames: MatchGame[], sour
 
 export async function hitsCount(): Promise<number> {
   return redis.zcard(K.hitsIdx);
-}
-
-// ---- open-lobby watchlist ----
-
-export async function watchAdd(matchId: number): Promise<void> {
-  if (!config.watchOpenMatches) return;
-  await redis.hset(K.watch, String(matchId), Date.now());
-}
-export async function watchRemove(matchId: number): Promise<void> {
-  await redis.hdel(K.watch, String(matchId));
-}
-export async function watchCount(): Promise<number> {
-  return redis.hlen(K.watch);
-}
-/** Prune aged/over-cap entries; return the ids still worth re-checking (newest first). */
-export async function watchDue(): Promise<number[]> {
-  if (!config.watchOpenMatches) return [];
-  const all = (await redis.hgetall(K.watch)) as Record<string, string>;
-  const now = Date.now();
-  const ttlMs = config.watchTtlSec * 1000;
-  const entries = Object.entries(all)
-    .map(([id, ts]) => ({ id: Number(id), firstSeen: Number(ts) }))
-    .sort((a, b) => b.firstSeen - a.firstSeen);
-
-  const keep: number[] = [];
-  const drop: string[] = [];
-  entries.forEach((e, i) => {
-    if (now - e.firstSeen > ttlMs || i >= config.watchMax) drop.push(String(e.id));
-    else keep.push(e.id);
-  });
-  if (drop.length) await redis.hdel(K.watch, ...drop);
-  return keep;
 }
 
 // ---- status ----

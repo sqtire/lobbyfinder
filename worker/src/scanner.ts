@@ -1,63 +1,62 @@
 import { config } from "./config.js";
 import { feedPageAsc, getMatchDetail, newestMatchId, tokenExpiresAtIso } from "./osu.js";
 import * as store from "./store.js";
-import type { AppConfig, LiveState, RescanState, MatchInfo, MatchGame, Status } from "./types.js";
+import type { AppConfig, RollState, RescanState, MatchInfo, Status } from "./types.js";
 
 /**
- * Two scan fronts run in one process and share the single 1 req/sec limiter:
- *   - live:   always walks forward toward the newest match (never rewound)
- *   - rescan: on demand, walks [from_id .. to_id] against the CURRENT pool
- * Plus a periodic re-check of still-open lobbies (maps are played after a lobby
- * opens). Equal LIVE_BATCH / RESCAN_BATCH => ~50/50 of processed matches.
+ * Two fronts share the single 1 req/sec limiter:
+ *   - rolling sweep (primary): walks forward but only PROCESSES a match once it
+ *     is >= rollDelaySec old, by which point a normal lobby has closed, so one
+ *     read returns its full history. Results lag real time by ~rollDelaySec.
+ *   - rescan (on demand): walks [from_id .. to_id] against the CURRENT pool.
+ * There is no live-edge front and no open-lobby watchlist: closed lobbies are
+ * read once and never re-polled, so there is nothing to evict.
  */
 export class Scanner {
-  private live!: LiveState;
+  private roll!: RollState;
 
-  // in-memory live cursors (persisted watermark is the source of truth on restart)
-  private liveBuffer: MatchInfo[] = [];
-  private liveEnumCursor = 0;
-  private liveCaughtUp = false;
-  private lastLiveStart: string | null = null;
+  // rolling sweep in-memory cursors (persisted cursor is source of truth on restart)
+  private rollBuffer: MatchInfo[] = [];
+  private rollEnumCursor = 0;
+  private parked = false;
+  private cursorStart: string | null = null; // start_time of the match at the cursor
 
-  // in-memory rescan cursors
+  // rescan in-memory cursors
   private rescanBuffer: MatchInfo[] = [];
   private rescanEnumCursor = 0;
-  private rescanSig = ""; // detects a freshly-requested rescan
+  private rescanSig = "";
 
   // telemetry
   private newestSeenId: number | null = null;
   private processedTotal = 0;
   private lastError: string | null = null;
   private lastStatusFlush = 0;
-  private lastWatchCheck = 0;
+  private lastEdgeProbe = 0;
 
   async init(): Promise<void> {
-    let s = await store.loadLiveState();
+    let s = await store.loadRollState();
     if (!s || !s.initialized) {
       const newest = await newestMatchId();
-      const watermark = newest ?? 0;
-      s = { watermark, initialized: newest !== null, started_at: new Date().toISOString() };
-      await store.saveLiveState(s);
-      console.log(`[init] live watermark seeded at ${watermark}`);
+      if (newest === null) throw new Error("could not reach osu! API to seed the rolling cursor");
+      this.newestSeenId = newest;
+      const cursor = Math.max(0, newest - config.rollSeedLookback);
+      s = { cursor, initialized: true, started_at: new Date().toISOString() };
+      await store.saveRollState(s);
+      console.log(`[init] seeded rolling cursor at ${cursor} (live edge ${newest}, lookback ${config.rollSeedLookback})`);
     } else {
-      console.log(`[init] resuming live watermark at ${s.watermark}`);
+      console.log(`[init] resuming rolling cursor at ${s.cursor}`);
     }
-    this.live = s;
-    this.liveEnumCursor = s.watermark;
-    if (s.watermark > 0) this.newestSeenId = s.watermark;
+    this.roll = s;
+    this.rollEnumCursor = s.cursor;
+    this.lastEdgeProbe = 0; // probe the live edge promptly
   }
 
   // ---- one outer cycle ----
   async cycle(cfg: AppConfig): Promise<boolean> {
     const targets = new Set(cfg.target_beatmap_ids);
-    let didWork = false;
+    await this.maybeProbeEdge();
 
-    if (this.watchDueNow()) {
-      this.lastWatchCheck = Date.now();
-      didWork = (await this.watchStep(targets)) || didWork;
-    }
-
-    didWork = (await this.liveStep(targets)) || didWork;
+    let didWork = await this.rollStep(targets);
 
     const rescan = await store.loadRescan();
     if (rescan && rescan.status === "running") {
@@ -68,38 +67,63 @@ export class Scanner {
     return didWork;
   }
 
-  // ---- live front ----
-  private async liveStep(targets: Set<number>): Promise<boolean> {
-    if (this.liveBuffer.length === 0) {
-      const page = await feedPageAsc(this.liveEnumCursor);
-      this.trackNewest(page.matches);
+  // ---- rolling sweep ----
+  private async rollStep(targets: Set<number>): Promise<boolean> {
+    if (this.rollBuffer.length === 0) {
+      const page = await feedPageAsc(this.rollEnumCursor);
       if (page.matches.length === 0) {
-        this.liveCaughtUp = true;
+        // nothing above the cursor yet — caught up to the live edge
+        this.parked = true;
         return false;
       }
-      this.liveCaughtUp = false;
-      this.liveBuffer = page.matches;
-      this.liveEnumCursor = page.nextCursor ?? page.matches[page.matches.length - 1]!.id;
+      this.rollBuffer = page.matches;
+      this.rollEnumCursor = page.nextCursor ?? page.matches[page.matches.length - 1]!.id;
     }
 
-    let processed = 0;
-    while (processed < config.liveBatch && this.liveBuffer.length > 0) {
-      const m = this.liveBuffer.shift()!;
-      // ids must move strictly forward past the watermark
-      if (m.id <= this.live.watermark) continue;
-      await this.processMatch(m, targets, "live");
-      this.live.watermark = m.id;
-      this.lastLiveStart = m.start_time;
-      processed++;
+    const now = Date.now();
+    const delayMs = config.rollDelaySec * 1000;
+    let reads = 0;
+    let advanced = false;
+
+    while (reads < config.rollBatch && this.rollBuffer.length > 0) {
+      const m = this.rollBuffer[0]!;
+      if (m.id <= this.roll.cursor) {
+        this.rollBuffer.shift(); // already processed; idempotent safety
+        continue;
+      }
+
+      // null start_time can't be aged → treat as old enough to process
+      const age = m.start_time ? now - Date.parse(m.start_time) : Number.POSITIVE_INFINITY;
+      if (Number.isFinite(age) && age < delayMs) {
+        // too young — park at the boundary and wait for it to age/close
+        this.parked = true;
+        return advanced;
+      }
+      this.parked = false;
+      this.rollBuffer.shift();
+
+      const stillOpen = m.end_time === null;
+      if (stillOpen && config.rollSkipOpen) {
+        // auto-host / freak long-runner: skip entirely (no read), advance past it
+        this.roll.cursor = m.id;
+        this.cursorStart = m.start_time;
+        advanced = true;
+        continue;
+      }
+
+      await this.processMatch(m, targets, "auto");
+      this.roll.cursor = m.id;
+      this.cursorStart = m.start_time;
+      advanced = true;
+      reads++;
     }
-    return processed > 0;
+    return advanced;
   }
 
-  // ---- rescan front ----
+  // ---- on-demand rescan ----
   private async rescanStep(targets: Set<number>, rescan: RescanState): Promise<boolean> {
     const sig = `${rescan.requested_at}:${rescan.from_id}:${rescan.to_id}`;
     if (sig !== this.rescanSig) {
-      // a new rescan was requested → reset in-memory walk
       this.rescanSig = sig;
       this.rescanBuffer = [];
       this.rescanEnumCursor = rescan.cursor;
@@ -112,7 +136,6 @@ export class Scanner {
 
     if (this.rescanBuffer.length === 0) {
       const page = await feedPageAsc(this.rescanEnumCursor);
-      this.trackNewest(page.matches);
       const inRange = page.matches.filter((m) => m.id <= rescan.to_id);
       const overshot = page.matches.some((m) => m.id > rescan.to_id);
       if (page.matches.length === 0 || (inRange.length === 0 && overshot)) {
@@ -149,30 +172,13 @@ export class Scanner {
     this.rescanBuffer = [];
   }
 
-  // ---- open-lobby re-check ----
-  private watchDueNow(): boolean {
-    return config.watchOpenMatches && Date.now() - this.lastWatchCheck >= config.watchRecheckEverySec * 1000;
-  }
-  private async watchStep(targets: Set<number>): Promise<boolean> {
-    const due = await store.watchDue();
-    const batch = due.slice(0, config.watchBatch);
-    for (const id of batch) {
-      const detail = await getMatchDetail(id);
-      const hits = detail.games.filter((g) => targets.has(g.beatmap_id));
-      if (hits.length) await store.upsertHit(detail, hits, "live");
-      if (detail.match.end_time !== null) await store.watchRemove(id); // closed → stop watching
-      this.processedTotal++;
-    }
-    return batch.length > 0;
-  }
-
   // ---- shared per-match work ----
-  private async processMatch(m: MatchInfo, targets: Set<number>, source: "live" | "rescan"): Promise<void> {
+  private async processMatch(m: MatchInfo, targets: Set<number>, source: "auto" | "rescan"): Promise<void> {
     try {
       const detail = await getMatchDetail(m.id);
-      const hits: MatchGame[] = detail.games.filter((g) => targets.has(g.beatmap_id));
-      if (hits.length) await store.upsertHit(detail, hits, source);
-      if (source === "live" && detail.match.end_time === null) await store.watchAdd(m.id);
+      const hits = detail.games.filter((g) => targets.has(g.beatmap_id));
+      const partial = detail.match.end_time === null; // still open => history may be incomplete
+      if (hits.length) await store.upsertHit(detail, hits, source, partial);
       this.processedTotal++;
       this.lastError = null;
     } catch (err) {
@@ -181,13 +187,21 @@ export class Scanner {
     }
   }
 
-  private trackNewest(matches: MatchInfo[]): void {
-    for (const m of matches) if (this.newestSeenId === null || m.id > this.newestSeenId) this.newestSeenId = m.id;
+  // ---- live-edge probe (cheap, just for telemetry) ----
+  private async maybeProbeEdge(): Promise<void> {
+    if (Date.now() - this.lastEdgeProbe < config.edgeProbeMs) return;
+    this.lastEdgeProbe = Date.now();
+    try {
+      const n = await newestMatchId();
+      if (n !== null && (this.newestSeenId === null || n > this.newestSeenId)) this.newestSeenId = n;
+    } catch {
+      /* transient; keep the last known edge */
+    }
   }
 
   // ---- status / persistence ----
-  isLiveIdle(): boolean {
-    return this.liveCaughtUp && this.liveBuffer.length === 0;
+  isParked(): boolean {
+    return this.parked && this.rollBuffer.length === 0;
   }
 
   private async maybeFlush(cfg?: AppConfig): Promise<void> {
@@ -197,25 +211,29 @@ export class Scanner {
 
   async flush(cfg?: AppConfig): Promise<void> {
     this.lastStatusFlush = Date.now();
-    await store.saveLiveState(this.live);
+    await store.saveRollState(this.roll);
 
     const rescan = await store.loadRescan();
     const active = !!rescan && rescan.status === "running";
-    const lagSeconds = this.lastLiveStart ? Math.max(0, Math.round((Date.now() - Date.parse(this.lastLiveStart)) / 1000)) : null;
-    const [hitsTotal, openWatched] = await Promise.all([store.hitsCount(), store.watchCount()]);
+    const coverage = this.cursorStart ? Math.max(0, Math.round((Date.now() - Date.parse(this.cursorStart)) / 1000)) : null;
+    const behind = coverage === null ? null : Math.max(0, coverage - config.rollDelaySec);
+    const onSchedule = behind === null ? true : behind <= Math.max(120, config.rollDelaySec * 0.1);
+    const hitsTotal = await store.hitsCount();
 
     const status: Status = {
       updated_at: new Date().toISOString(),
       enabled: cfg?.enabled ?? true,
       pool_size: cfg?.target_beatmap_ids.length ?? 0,
-      live_watermark: this.live.watermark,
+      roll_cursor: this.roll.cursor,
       newest_seen_id: this.newestSeenId,
-      last_processed_start_time: this.lastLiveStart,
-      lag_seconds: lagSeconds,
-      caught_up: this.isLiveIdle(),
+      cursor_start_time: this.cursorStart,
+      coverage_delay_seconds: coverage,
+      target_delay_seconds: config.rollDelaySec,
+      behind_seconds: behind,
+      parked: this.isParked(),
+      on_schedule: onSchedule,
       processed_total: this.processedTotal,
       hits_total: hitsTotal,
-      open_watched: openWatched,
       token_expires_at: tokenExpiresAtIso(),
       rescan: {
         active,
@@ -231,7 +249,6 @@ export class Scanner {
     await store.writeStatus(status);
   }
 
-  /** Write a status snapshot reflecting a paused/idle worker. */
   async flushPaused(cfg: AppConfig, reason: "paused" | "no_pool"): Promise<void> {
     this.lastError = reason === "no_pool" ? "no target beatmaps configured" : null;
     await this.flush(cfg);

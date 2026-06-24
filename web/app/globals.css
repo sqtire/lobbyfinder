@@ -427,7 +427,8 @@ button {
   background: rgba(244, 200, 80, 0.15);
   color: var(--amber);
 }
-.badge.live {
+.badge.live,
+.badge.auto {
   background: rgba(116, 224, 160, 0.12);
   color: var(--green);
 }

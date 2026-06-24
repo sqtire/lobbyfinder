@@ -7,7 +7,6 @@ import ControlPanel from "./ControlPanel";
 import ResultsList from "./ResultsList";
 
 const POLL_MS = 10000;
-const LAG_CAP = 3600; // matches behind at which the catch-up gauge reads empty
 
 export default function Dashboard() {
   const [data, setData] = useState<DataResponse | null>(null);
@@ -44,6 +43,7 @@ export default function Dashboard() {
   const config = data?.config ?? { target_beatmap_ids: [], enabled: false, updated_at: "" };
   const authed = data?.authed ?? false;
   const pill = derivePill(data, errored);
+  const targetDelay = status?.target_delay_seconds ?? 4 * 3600;
 
   return (
     <main className="wrap">
@@ -53,8 +53,8 @@ export default function Dashboard() {
             MP <span className="accent">Pool</span> Scanner
           </h1>
           <div className="subtitle">
-            Watches every osu! multiplayer lobby for maps in your pool · one scan front live, one for rescans · ~1
-            request/sec
+            Reads every osu! multiplayer lobby ~{fmtDur(targetDelay)} after it&apos;s created — once closed, so each is
+            caught in full · rolling sweep + on-demand rescans · ~1 request/sec
           </div>
         </div>
         <span className="pill">
@@ -79,7 +79,7 @@ export default function Dashboard() {
       </section>
 
       <div className="footer">
-        Uses beatmap (difficulty) IDs · match-feed scanning is visible tournament scouting · data updates every{" "}
+        Uses beatmap (difficulty) IDs · results trail real time by ~{fmtDur(targetDelay)} by design · data updates every{" "}
         {POLL_MS / 1000}s
       </div>
     </main>
@@ -98,20 +98,22 @@ function HealthPanel({
   errored: boolean;
 }) {
   const running = config.enabled && config.target_beatmap_ids.length > 0;
+  const target = status?.target_delay_seconds ?? 4 * 3600;
 
-  // catch-up gauge: how close the live front is to the newest match it has seen
-  const watermark = status?.live_watermark ?? 0;
-  const newest = status?.newest_seen_id ?? watermark;
-  const behind = Math.max(0, newest - watermark);
-  const fill = status?.caught_up ? 100 : Math.max(2, Math.round(100 * (1 - Math.min(1, behind / LAG_CAP))));
-
-  // live lag ticks up between polls while running (the last processed match keeps aging)
-  let lagSeconds: number | null = null;
-  if (running && status && status.lag_seconds != null) {
+  // coverage delay = age of the lobby at the cursor; ticks up between polls while parked
+  let coverage: number | null = null;
+  if (running && status && status.coverage_delay_seconds != null) {
     const since = Math.max(0, (clock - Date.parse(status.updated_at)) / 1000);
-    lagSeconds = status.lag_seconds + (Number.isFinite(since) ? since : 0);
+    coverage = status.coverage_delay_seconds + (Number.isFinite(since) ? since : 0);
   }
-  const lagClass = lagSeconds == null ? "" : lagSeconds < 90 ? "ok" : "warn";
+  const behind = coverage == null ? null : Math.max(0, coverage - target);
+  const onSchedule = running && (status?.on_schedule ?? false) && (behind == null || behind <= Math.max(120, target * 0.1));
+
+  // gauge: full + green when on schedule, shrinks as it falls behind the boundary
+  const fill = !running ? 0 : onSchedule ? 100 : behind == null ? 100 : Math.max(3, Math.round(100 * (1 - Math.min(1, behind / target))));
+
+  const headline = !running ? "paused" : onSchedule ? "on schedule" : `behind ${fmtDur(behind)}`;
+  const headClass = !running ? "" : onSchedule ? "ok" : "warn";
 
   const rescan = status?.rescan;
   const rescanActive = rescan?.active ?? false;
@@ -125,12 +127,12 @@ function HealthPanel({
       <h2>Scanner health</h2>
 
       <div className="lag-line">
-        <span className={`lag-num ${lagClass}`}>{running ? fmtDur(lagSeconds) : "paused"}</span>
+        <span className={`lag-num ${headClass}`}>{headline}</span>
         <span className="lag-cap">
           {running
-            ? status?.caught_up
-              ? "at the live edge · last match this long ago"
-              : `behind the live edge · last processed match this long ago`
+            ? onSchedule
+              ? `reading lobbies ~${fmtDur(coverage)} old (target ~${fmtDur(target)}) · keeping up`
+              : `working through a backlog · processing lobbies ~${fmtDur(coverage)} old`
             : config.target_beatmap_ids.length === 0
               ? "no beatmap pool set"
               : "scanner stopped"}
@@ -142,8 +144,8 @@ function HealthPanel({
         <div className="gauge-head" style={{ left: `calc(${fill}% - 1px)` }} />
       </div>
       <div className="gauge-labels">
-        <span>{status?.caught_up ? "caught up" : `${fmtNum(behind)} matches behind`}</span>
-        <span>live edge →</span>
+        <span>{running ? `coverage delay ~${fmtDur(coverage)}` : "—"}</span>
+        <span>target ~{fmtDur(target)} →</span>
       </div>
 
       {rescanActive && (
@@ -163,12 +165,12 @@ function HealthPanel({
       )}
 
       <div className="stats">
-        <Stat k="Live watermark" v={status ? `#${fmtNum(status.live_watermark)}` : "—"} />
-        <Stat k="Newest seen" v={status?.newest_seen_id ? `#${fmtNum(status.newest_seen_id)}` : "—"} />
+        <Stat k="Cursor" v={status ? `#${fmtNum(status.roll_cursor)}` : "—"} />
+        <Stat k="Live edge" v={status?.newest_seen_id ? `#${fmtNum(status.newest_seen_id)}` : "—"} />
+        <Stat k="Coverage delay" v={running ? fmtDur(coverage) : "—"} />
         <Stat k="Pool size" v={fmtNum(config.target_beatmap_ids.length)} />
         <Stat k="Processed" v={fmtNum(status?.processed_total)} />
         <Stat k="Hits" v={fmtNum(status?.hits_total)} />
-        <Stat k="Open watched" v={fmtNum(status?.open_watched)} />
         <Stat k="Updated" v={errored ? "stale" : fmtAgo(status?.updated_at)} />
         <Stat k="Token renews" v={fmtAgo(status?.token_expires_at).replace(" ago", "")} />
       </div>
@@ -196,6 +198,6 @@ function derivePill(data: DataResponse | null, errored: boolean): { dot: string;
   if (!data || !data.status) return { dot: "paused", label: "Connecting…" };
   if (!data.config.enabled) return { dot: "paused", label: "Stopped" };
   if (data.config.target_beatmap_ids.length === 0) return { dot: "paused", label: "No pool set" };
-  if (data.status.caught_up) return { dot: "live", label: "Live · caught up" };
-  return { dot: "lag", label: "Live · catching up" };
+  if (data.status.on_schedule) return { dot: "live", label: "Rolling · on schedule" };
+  return { dot: "lag", label: "Rolling · behind" };
 }
