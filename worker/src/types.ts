@@ -25,11 +25,13 @@ export interface MatchGame {
   start_time?: string | null;
   end_time?: string | null;
   scores_count: number;
+  player_ids: number[]; // user_ids that posted a score on this game
 }
 
 export interface MatchDetail {
   match: MatchInfo;
   games: MatchGame[];
+  users: Record<number, string>; // user_id -> username, for the whole match
 }
 
 // ---- our records (Redis) ----
@@ -76,6 +78,12 @@ export interface HitGame {
   scores_count: number;
 }
 
+export interface PlayerStat {
+  user_id: number;
+  username: string;
+  maps_played: number; // games in this lobby where the player posted a score
+}
+
 export interface Hit {
   match_id: number;
   match_name: string;
@@ -87,6 +95,7 @@ export interface Hit {
   found_at: string;
   source: "auto" | "rescan"; // auto = rolling sweep, rescan = on-demand
   games: HitGame[]; // only the games whose beatmap_id is in the pool
+  players: PlayerStat[]; // everyone active in the lobby (all maps), most-active first
 }
 
 /** Telemetry for the public health panel. */

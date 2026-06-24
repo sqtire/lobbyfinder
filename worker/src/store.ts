@@ -1,6 +1,6 @@
 import { Redis } from "ioredis";
 import { config } from "./config.js";
-import type { AppConfig, RollState, RescanState, Hit, HitGame, Status, MatchDetail, MatchGame } from "./types.js";
+import type { AppConfig, RollState, RescanState, Hit, HitGame, PlayerStat, Status, MatchDetail, MatchGame } from "./types.js";
 
 const redis = new Redis(config.redisUrl, {
   maxRetriesPerRequest: null, // let ioredis keep retrying transient blips
@@ -15,6 +15,7 @@ const K = {
   status: `${config.keyPrefix}:status`,
   hits: `${config.keyPrefix}:hits`, // HASH matchId -> Hit (JSON)
   hitsIdx: `${config.keyPrefix}:hits:idx`, // ZSET matchId scored by start_time epoch
+  hidden: `${config.keyPrefix}:hits:hidden`, // SET of matchIds removed in the UI (never re-add)
 };
 
 const beatmapUrl = (id: number) => `https://osu.ppy.sh/b/${id}`;
@@ -77,6 +78,8 @@ export async function upsertHit(
   partial: boolean
 ): Promise<void> {
   const m = detail.match;
+  // a lobby the user removed in the UI must never be re-added (even by a rescan)
+  if (await redis.sismember(K.hidden, String(m.id))) return;
   const games: HitGame[] = hitGames.map((g) => ({
     game_id: g.id,
     beatmap_id: g.beatmap_id,
@@ -90,6 +93,7 @@ export async function upsertHit(
     played_at: g.start_time ?? null,
     scores_count: g.scores_count,
   }));
+  const players = aggregatePlayers(detail);
   const hit: Hit = {
     match_id: m.id,
     match_name: m.name,
@@ -101,9 +105,24 @@ export async function upsertHit(
     found_at: new Date().toISOString(),
     source,
     games,
+    players,
   };
   await redis.hset(K.hits, String(m.id), JSON.stringify(hit));
   await redis.zadd(K.hitsIdx, epoch(m.start_time), String(m.id));
+}
+
+/** Count, per user, how many games in the whole lobby they posted a score on. */
+function aggregatePlayers(detail: MatchDetail): PlayerStat[] {
+  const counts = new Map<number, number>();
+  for (const g of detail.games) {
+    for (const uid of g.player_ids) counts.set(uid, (counts.get(uid) ?? 0) + 1);
+  }
+  const out: PlayerStat[] = [];
+  for (const [user_id, maps_played] of counts) {
+    out.push({ user_id, username: detail.users[user_id] ?? `User ${user_id}`, maps_played });
+  }
+  out.sort((a, b) => b.maps_played - a.maps_played || a.username.localeCompare(b.username));
+  return out;
 }
 
 export async function hitsCount(): Promise<number> {

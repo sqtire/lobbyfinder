@@ -47,6 +47,12 @@ export interface HitGame {
   scores_count: number;
 }
 
+export interface PlayerStat {
+  user_id: number;
+  username: string;
+  maps_played: number;
+}
+
 export interface Hit {
   match_id: number;
   match_name: string;
@@ -58,6 +64,7 @@ export interface Hit {
   found_at: string;
   source: "auto" | "rescan" | "live"; // "live" kept for hits stored before the rolling rewrite
   games: HitGame[];
+  players?: PlayerStat[]; // absent on hits stored before player capture was added
 }
 
 export interface DataResponse {
@@ -65,6 +72,7 @@ export interface DataResponse {
   config: AppConfig;
   hits: Hit[];
   authed: boolean;
+  hidden_count: number;
 }
 
 export const MAX_POOL = 30;

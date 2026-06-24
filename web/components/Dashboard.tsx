@@ -5,6 +5,7 @@ import type { DataResponse, Status } from "@/lib/types";
 import { fmtDur, fmtNum, fmtAgo } from "@/lib/format";
 import ControlPanel from "./ControlPanel";
 import ResultsList from "./ResultsList";
+import CompactList from "./CompactList";
 
 const POLL_MS = 10000;
 
@@ -12,6 +13,7 @@ export default function Dashboard() {
   const [data, setData] = useState<DataResponse | null>(null);
   const [errored, setErrored] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
+  const [view, setView] = useState<"log" | "compact">("compact");
   const inFlight = useRef(false);
 
   const refetch = useCallback(async () => {
@@ -69,13 +71,29 @@ export default function Dashboard() {
 
       <section className="panel">
         <div className="results-head">
-          <h2 style={{ margin: 0 }}>Results</h2>
+          <div className="tabs">
+            <button className={`tab ${view === "compact" ? "active" : ""}`} onClick={() => setView("compact")}>
+              Lobbies
+            </button>
+            <button className={`tab ${view === "log" ? "active" : ""}`} onClick={() => setView("log")}>
+              Log
+            </button>
+          </div>
           <span className="hint mono">
             {fmtNum(status?.hits_total ?? data?.hits.length ?? 0)} lobbies
             {data && data.hits.length >= 200 ? " · showing newest 200" : ""}
           </span>
         </div>
-        <ResultsList hits={data?.hits ?? []} />
+        {view === "compact" ? (
+          <CompactList
+            hits={data?.hits ?? []}
+            authed={authed}
+            hiddenCount={data?.hidden_count ?? 0}
+            onChanged={refetch}
+          />
+        ) : (
+          <ResultsList hits={data?.hits ?? []} />
+        )}
       </section>
 
       <div className="footer">

@@ -10,6 +10,7 @@ const K = {
   status: `${PREFIX}:status`,
   hits: `${PREFIX}:hits`,
   hitsIdx: `${PREFIX}:hits:idx`,
+  hidden: `${PREFIX}:hits:hidden`,
 };
 
 // Reuse one connection across hot reloads / lambda invocations.
@@ -128,4 +129,28 @@ export async function cancelRescan(): Promise<boolean> {
 export async function clearHits(): Promise<void> {
   const c = client();
   await c.del(K.hits, K.hitsIdx);
+}
+
+/** Tombstone match ids so the worker won't re-add them (even on rescan), then drop the stored hits. */
+export async function removeHits(ids: number[]): Promise<number> {
+  const clean = Array.from(new Set(ids.filter((n) => Number.isInteger(n) && n > 0)));
+  if (clean.length === 0) return 0;
+  const members = clean.map(String);
+  const c = client();
+  // hide FIRST so a worker mid-write loses the race and skips the re-add
+  await c.sadd(K.hidden, ...members);
+  await c.hdel(K.hits, ...members);
+  await c.zrem(K.hitsIdx, ...members);
+  return clean.length;
+}
+
+export async function resetHidden(): Promise<number> {
+  const c = client();
+  const n = await c.scard(K.hidden);
+  await c.del(K.hidden);
+  return n;
+}
+
+export async function hiddenCount(): Promise<number> {
+  return client().scard(K.hidden);
 }

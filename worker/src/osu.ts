@@ -163,12 +163,21 @@ export async function newestMatchId(): Promise<number | null> {
 export async function getMatchDetail(matchId: number): Promise<MatchDetail> {
   const seen = new Set<number>();
   const games = new Map<number, MatchGame>();
+  const users = new Map<number, string>();
   let info: MatchInfo | null = null;
   let before: number | undefined;
 
   for (let page = 0; page < config.maxEventPages; page++) {
     const raw = await apiGet<any>(`/matches/${matchId}`, { limit: config.eventsPageLimit, before });
     if (!info && raw?.match) info = parseMatch(raw.match);
+
+    if (Array.isArray(raw?.users)) {
+      for (const u of raw.users) {
+        if (u && typeof u.id === "number" && typeof u.username === "string" && !users.has(u.id)) {
+          users.set(u.id, u.username);
+        }
+      }
+    }
 
     const events: any[] = Array.isArray(raw?.events) ? raw.events : [];
     if (events.length === 0) break;
@@ -195,7 +204,7 @@ export async function getMatchDetail(matchId: number): Promise<MatchDetail> {
   }
 
   if (!info) info = { id: matchId, name: "", start_time: null, end_time: null };
-  return { match: info, games: [...games.values()] };
+  return { match: info, games: [...games.values()], users: Object.fromEntries(users) };
 }
 
 function normalizeGame(g: any): MatchGame {
@@ -216,5 +225,8 @@ function normalizeGame(g: any): MatchGame {
     start_time: g.start_time ?? null,
     end_time: g.end_time ?? null,
     scores_count: Array.isArray(g.scores) ? g.scores.length : 0,
+    player_ids: Array.isArray(g.scores)
+      ? g.scores.map((s: any) => s?.user_id).filter((x: any): x is number => typeof x === "number")
+      : [],
   };
 }
