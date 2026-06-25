@@ -570,6 +570,8 @@ button {
   border-radius: 5px;
   padding: 0;
   line-height: 1;
+  display: grid;
+  place-items: center;
 }
 .caret:hover:not(.disabled) {
   color: var(--pink);
@@ -578,6 +580,13 @@ button {
 .caret.disabled {
   color: var(--muted-2);
   cursor: default;
+}
+.chev {
+  display: block;
+  transition: transform 0.15s ease;
+}
+.caret.open .chev {
+  transform: rotate(90deg);
 }
 .ctable-name {
   font-weight: 600;

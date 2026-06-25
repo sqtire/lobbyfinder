@@ -121,13 +121,26 @@ export default function CompactList({
                 )}
 
                 <button
-                  className={`caret ${hasPlayers ? "" : "disabled"}`}
+                  className={`caret ${isOpen ? "open" : ""} ${hasPlayers ? "" : "disabled"}`}
                   onClick={() => hasPlayers && toggleOpen(h.match_id)}
                   aria-label={isOpen ? "Hide players" : "Show players"}
                   title={hasPlayers ? (isOpen ? "Hide players" : "Show players") : "No player data — rescan to populate"}
                   disabled={!hasPlayers}
                 >
-                  {hasPlayers ? (isOpen ? "▾" : "▸") : "·"}
+                  {hasPlayers ? (
+                    <svg className="chev" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                      <polyline
+                        points="9 5 16 12 9 19"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : (
+                    <span className="caret-dot">·</span>
+                  )}
                 </button>
 
                 <a className="ctable-name" href={h.match_url} target="_blank" rel="noreferrer" title={h.match_name}>
