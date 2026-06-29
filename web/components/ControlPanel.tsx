@@ -248,6 +248,25 @@ export default function ControlPanel({
       )}
 
       <hr className="hr" />
+      <div className="export-block">
+        <div className="export-label">Export round data</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <a className="btn ghost" href="/api/export?format=lobbies" download>
+            Lobbies + maps (CSV)
+          </a>
+          <a className="btn ghost" href="/api/export?format=players" download>
+            Players + maps (CSV)
+          </a>
+          <a className="btn ghost" href="/api/export?format=json" download>
+            Everything (JSON)
+          </a>
+        </div>
+        <p className="hint" style={{ marginTop: 8 }}>
+          All flagged lobbies (removed ones excluded). CSVs open in Sheets/Excel; JSON is a complete, re-importable backup.
+        </p>
+      </div>
+
+      <hr className="hr" />
       <div className="row">
         <button className="btn danger" disabled={busy} onClick={clearResults}>
           Clear results

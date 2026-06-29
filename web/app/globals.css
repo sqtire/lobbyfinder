@@ -727,3 +727,17 @@ button {
     grid-template-columns: 26px 22px minmax(0, 1fr) 50px 58px;
   }
 }
+
+/* export buttons (anchors styled as buttons) */
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.export-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted-2);
+  margin-bottom: 8px;
+}

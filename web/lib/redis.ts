@@ -66,6 +66,24 @@ export async function getHits(limit = 200): Promise<Hit[]> {
   return out;
 }
 
+/** Every flagged lobby, newest first (no cap). Removed/tombstoned lobbies are already gone from the hash. */
+export async function getAllHits(): Promise<Hit[]> {
+  const c = client();
+  const ids = await c.zrevrange(K.hitsIdx, 0, -1);
+  if (ids.length === 0) return [];
+  const raws = await c.hmget(K.hits, ...ids);
+  const out: Hit[] = [];
+  for (const raw of raws) {
+    if (!raw) continue;
+    try {
+      out.push(JSON.parse(raw) as Hit);
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return out;
+}
+
 /** Sanitize a user-submitted pool: ints, positive, deduped, capped. */
 export function sanitizePool(input: unknown): number[] {
   if (!Array.isArray(input)) return [];
