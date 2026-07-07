@@ -70,7 +70,7 @@ export default function TeamsGrid() {
                   <FragmentRow
                     key={rowKey}
                     teamName={t.name}
-                    teamSpan={pi === 0 ? t.players.length : 0}
+                    first={pi === 0}
                     p={p}
                     maps={data.maps}
                     openMap={openMap}
@@ -88,14 +88,14 @@ export default function TeamsGrid() {
 
 function FragmentRow({
   teamName,
-  teamSpan,
+  first,
   p,
   maps,
   openMap,
   onToggle,
 }: {
   teamName: string;
-  teamSpan: number;
+  first: boolean;
   p: TeamsGridData["teams"][number]["players"][number];
   maps: TeamsGridData["maps"];
   openMap: number | null;
@@ -105,11 +105,7 @@ function FragmentRow({
   return (
     <>
       <tr>
-        {teamSpan > 0 && (
-          <td className="col-team" rowSpan={teamSpan * 2}>
-            {teamName}
-          </td>
-        )}
+        <td className={`col-team ${first ? "t-first" : "t-cont"}`}>{first ? teamName : ""}</td>
         <td className="col-player">
           {p.user_id ? (
             <a href={profileUrl(p.user_id)} target="_blank" rel="noreferrer">
@@ -145,9 +141,10 @@ function FragmentRow({
           );
         })}
       </tr>
-      <tr className={`detail-tr ${detail ? "show" : ""}`}>
-        <td colSpan={1 + maps.length} className="detail-td">
-          {detail && openMap !== null && (
+      {detail && openMap !== null && (
+        <tr className="detail-tr">
+          <td className="col-team t-cont" />
+          <td colSpan={1 + maps.length} className="detail-td">
             <div className="detail-strip">
               <span className="detail-map">
                 {maps[openMap]!.title ?? `#${maps[openMap]!.beatmap_id}`} — all scores for {p.name}:
@@ -156,9 +153,9 @@ function FragmentRow({
                 <ScoreLine key={i} s={s} />
               ))}
             </div>
-          )}
-        </td>
-      </tr>
+          </td>
+        </tr>
+      )}
     </>
   );
 }

@@ -841,11 +841,11 @@ table.tgrid {
   font-size: 10px;
   color: var(--blue);
 }
-.detail-tr {
-  display: none;
+.tgrid td.col-team {
+  border-bottom: none;
 }
-.detail-tr.show {
-  display: table-row;
+.tgrid td.col-team.t-first {
+  border-top: 1px solid var(--line);
 }
 .detail-td {
   background: var(--bg-2);
