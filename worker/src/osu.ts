@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { RateLimiter, sleep } from "./ratelimit.js";
-import type { MatchInfo, MatchGame, MatchDetail } from "./types.js";
+import type { MatchInfo, MatchGame, MatchDetail, GameScore } from "./types.js";
 
 const OAUTH_URL = "https://osu.ppy.sh/oauth/token";
 const API_BASE = "https://osu.ppy.sh/api/v2";
@@ -225,8 +225,21 @@ function normalizeGame(g: any): MatchGame {
     start_time: g.start_time ?? null,
     end_time: g.end_time ?? null,
     scores_count: Array.isArray(g.scores) ? g.scores.length : 0,
-    player_ids: Array.isArray(g.scores)
-      ? g.scores.map((s: any) => s?.user_id).filter((x: any): x is number => typeof x === "number")
+    scores: Array.isArray(g.scores)
+      ? g.scores.map(normalizeScore).filter((s: GameScore | null): s is GameScore => s !== null)
       : [],
+  };
+}
+
+function normalizeScore(s: any): GameScore | null {
+  if (!s || typeof s.user_id !== "number") return null;
+  const passed =
+    typeof s.passed === "boolean" ? s.passed : typeof s?.match?.pass === "boolean" ? s.match.pass : true;
+  return {
+    user_id: s.user_id,
+    score: typeof s.score === "number" ? s.score : 0,
+    accuracy: typeof s.accuracy === "number" ? s.accuracy : 0,
+    mods: Array.isArray(s.mods) ? s.mods.filter((m: any) => typeof m === "string") : [],
+    passed,
   };
 }

@@ -6,6 +6,7 @@ import { fmtDur, fmtNum, fmtAgo } from "@/lib/format";
 import ControlPanel from "./ControlPanel";
 import ResultsList from "./ResultsList";
 import CompactList from "./CompactList";
+import TeamsGrid from "./TeamsGrid";
 
 const POLL_MS = 10000;
 
@@ -13,7 +14,7 @@ export default function Dashboard() {
   const [data, setData] = useState<DataResponse | null>(null);
   const [errored, setErrored] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
-  const [view, setView] = useState<"log" | "compact">("compact");
+  const [view, setView] = useState<"log" | "compact" | "teams">("compact");
   const inFlight = useRef(false);
 
   const refetch = useCallback(async () => {
@@ -78,11 +79,16 @@ export default function Dashboard() {
             <button className={`tab ${view === "log" ? "active" : ""}`} onClick={() => setView("log")}>
               Log
             </button>
+            <button className={`tab ${view === "teams" ? "active" : ""}`} onClick={() => setView("teams")}>
+              Teams
+            </button>
           </div>
-          <span className="hint mono">
-            {fmtNum(status?.hits_total ?? data?.hits.length ?? 0)} lobbies
-            {data && data.hits.length >= 200 ? " · showing newest 200" : ""}
-          </span>
+          {view !== "teams" && (
+            <span className="hint mono">
+              {fmtNum(status?.hits_total ?? data?.hits.length ?? 0)} lobbies
+              {data && data.hits.length >= 200 ? " · showing newest 200" : ""}
+            </span>
+          )}
         </div>
         {view === "compact" ? (
           <CompactList
@@ -91,6 +97,8 @@ export default function Dashboard() {
             hiddenCount={data?.hidden_count ?? 0}
             onChanged={refetch}
           />
+        ) : view === "teams" ? (
+          <TeamsGrid />
         ) : (
           <ResultsList hits={data?.hits ?? []} />
         )}

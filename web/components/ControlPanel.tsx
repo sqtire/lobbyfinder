@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AppConfig, Status } from "@/lib/types";
 import { MAX_POOL } from "@/lib/types";
 import { fmtDur, fmtNum } from "@/lib/format";
+import RosterSync from "./RosterSync";
 
 type Toast = { kind: "ok" | "err"; msg: string } | null;
 
@@ -246,6 +247,9 @@ export default function ControlPanel({
           {fmtNum(status.rescan.processed)} · ~{fmtNum(status.rescan.remaining)} match IDs left
         </p>
       )}
+
+      <hr className="hr" />
+      <RosterSync />
 
       <hr className="hr" />
       <div className="export-block">

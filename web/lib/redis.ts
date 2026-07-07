@@ -11,6 +11,7 @@ const K = {
   hits: `${PREFIX}:hits`,
   hitsIdx: `${PREFIX}:hits:idx`,
   hidden: `${PREFIX}:hits:hidden`,
+  roster: `${PREFIX}:roster`,
 };
 
 // Reuse one connection across hot reloads / lambda invocations.
@@ -171,4 +172,20 @@ export async function resetHidden(): Promise<number> {
 
 export async function hiddenCount(): Promise<number> {
   return client().scard(K.hidden);
+}
+
+// ---- roster ----
+
+import type { Roster } from "./types";
+
+export async function getRoster(): Promise<Roster | null> {
+  return getJson<Roster>(K.roster);
+}
+
+export async function saveRoster(r: Roster): Promise<void> {
+  await client().set(K.roster, JSON.stringify(r));
+}
+
+export async function clearRoster(): Promise<void> {
+  await client().del(K.roster);
 }

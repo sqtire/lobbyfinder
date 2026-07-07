@@ -12,6 +12,14 @@ export interface MatchInfo {
   end_time: string | null; // null => lobby still open
 }
 
+export interface GameScore {
+  user_id: number;
+  score: number;
+  accuracy: number; // 0..1 as returned by the API
+  mods: string[];
+  passed: boolean;
+}
+
 export interface MatchGame {
   id: number;
   beatmap_id: number;
@@ -25,7 +33,7 @@ export interface MatchGame {
   start_time?: string | null;
   end_time?: string | null;
   scores_count: number;
-  player_ids: number[]; // user_ids that posted a score on this game
+  scores: GameScore[]; // one entry per score posted on this game
 }
 
 export interface MatchDetail {
@@ -76,6 +84,7 @@ export interface HitGame {
   team_type: string | null;
   played_at: string | null;
   scores_count: number;
+  scores: GameScore[]; // per-player scores on this pool map (drives the Teams grid)
 }
 
 export interface PlayerStat {

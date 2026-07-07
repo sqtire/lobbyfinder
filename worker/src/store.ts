@@ -92,6 +92,7 @@ export async function upsertHit(
     team_type: g.team_type ?? null,
     played_at: g.start_time ?? null,
     scores_count: g.scores_count,
+    scores: g.scores,
   }));
   const players = aggregatePlayers(detail);
   const hit: Hit = {
@@ -115,7 +116,7 @@ export async function upsertHit(
 function aggregatePlayers(detail: MatchDetail): PlayerStat[] {
   const counts = new Map<number, number>();
   for (const g of detail.games) {
-    for (const uid of g.player_ids) counts.set(uid, (counts.get(uid) ?? 0) + 1);
+    for (const s of g.scores) counts.set(s.user_id, (counts.get(s.user_id) ?? 0) + 1);
   }
   const out: PlayerStat[] = [];
   for (const [user_id, maps_played] of counts) {
