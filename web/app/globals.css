@@ -749,9 +749,28 @@ a.btn {
   margin-bottom: 8px;
 }
 .tgrid-wrap {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 78vh;
+  max-height: 78dvh;
+  overscroll-behavior-x: contain;
   border: 1px solid var(--line);
   border-radius: 9px;
+  scrollbar-color: var(--line-2) transparent;
+}
+.tgrid-wrap::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.tgrid-wrap::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 5px;
+}
+.tgrid-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+.tgrid-wrap::-webkit-scrollbar-track,
+.tgrid-wrap::-webkit-scrollbar-corner {
+  background: transparent;
 }
 table.tgrid {
   border-collapse: collapse;
