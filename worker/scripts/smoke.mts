@@ -32,16 +32,20 @@ await store.flushIndexMeta();
 let sum = store.indexSummary();
 assert(sum.days === 3 && sum.matches === 4 && sum.oldest_day === day(-45), `summary ${JSON.stringify(sum)}`);
 
-// scan: pool {222} over last 5 days => 1000, 1002 ; day(-2) has no bucket => uncovered ; day(0) pending (cursor day)
-let res = await store.scanIndex(day(-5), day(0), new Set([222]), day(0));
-assert(res.candidates.map((c) => c.match_id).join(",") === "1000,1002", `scan candidates ${JSON.stringify(res.candidates)}`);
-assert(res.uncovered.join(",") === [day(-5), day(-4), day(-2)].join(","), `uncovered days ${res.uncovered}`);
-res = await store.scanIndex(day(-1), day(-1), new Set([333]), null);
-assert(res.candidates.length === 1 && res.candidates[0]!.partial === true, "partial flag surfaces in scan");
+// scan by id range: pool {222} over #950..#1002 => 1000, 1002 (900 excluded by range) ; #1001 plays 333 only
+let cands = await store.scanIndex(950, 1002, new Set([222]));
+assert(cands.map((c) => c.match_id).join(",") === "1000,1002", `scan candidates ${JSON.stringify(cands)}`);
+cands = await store.scanIndex(1, 5000, new Set([333]));
+assert(cands.length === 1 && cands[0]!.partial === true, "partial flag surfaces in scan");
+assert((await store.scanIndex(1001, 1001, new Set([222]))).length === 0, "id bounds are inclusive and exact");
 
-// coverage merge
+// coverage merge + gap detection
 store.addCoverage(100, 200); store.addCoverage(201, 300); store.addCoverage(500, 600); store.addCoverage(150, 250);
 assert(JSON.stringify(store.getCoverage()) === JSON.stringify([{ from: 100, to: 300 }, { from: 500, to: 600 }]), "coverage merges adjacent/overlapping");
+const gaps = store.uncoveredRanges(50, 700);
+assert(JSON.stringify(gaps) === JSON.stringify([{ from: 50, to: 99 }, { from: 301, to: 499 }, { from: 601, to: 700 }]), `uncoveredRanges ${JSON.stringify(gaps)}`);
+assert(store.rangeSize(gaps) === 50 + 199 + 100, "rangeSize sums gaps");
+assert(store.uncoveredRanges(120, 280).length === 0, "fully covered range has no gaps");
 await store.flushIndexMeta();
 await store.loadIndexMeta();
 assert(store.getCoverage().length === 2, "coverage persisted + reloaded");
@@ -67,7 +71,7 @@ assert(await store.isHidden("catfe3", 1000), "isHidden true");
 
 // tenants + global
 await r.sadd(store.K.tenants, "catfe3");
-await r.set(store.K.tenant("catfe3"), JSON.stringify({ slug: "catfe3", name: "Catfe 3", owner_id: 36887266, pool: [111, 222], enabled: true, start_day: day(-10), created_at: new Date().toISOString(), updated_at: new Date().toISOString() }));
+await r.set(store.K.tenant("catfe3"), JSON.stringify({ slug: "catfe3", name: "Catfe 3", owner_id: 36887266, pool: [111, 222], enabled: true, start_id: 900, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }));
 const tenants = await store.loadTenants();
 assert(tenants.length === 1 && tenants[0]!.pool.length === 2, "loadTenants");
 assert((await store.loadGlobal()).enabled === true, "global default enabled");
@@ -78,17 +82,17 @@ const w = await store.popNextWalk();
 assert(w?.id === "w1" && w.status === "running" && (await store.loadWalk())?.id === "w1", "popNextWalk promotes to active");
 
 // backfill scan path via the scanner (no API needed for queued -> scanning)
-await r.set(store.K.tBackfill("catfe3"), JSON.stringify({ status: "queued", from_day: day(-5), to_day: day(0), requested_at: new Date().toISOString(), requested_by: 1, started_at: null, finished_at: null, candidates: 0, linked: 0, to_fetch: 0, fetched: 0, tombstoned: 0, uncovered_days: [], error: null }));
+store.addCoverage(1000, 1002); await store.flushIndexMeta(); // the sweep has read #1000-#1002; #950-#999 never read
+await r.set(store.K.tBackfill("catfe3"), JSON.stringify({ status: "queued", from_id: 950, to_id: 1002, requested_at: new Date().toISOString(), requested_by: 1, started_at: null, finished_at: null, candidates: 0, linked: 0, to_fetch: 0, fetched: 0, tombstoned: 0, uncovered: [], uncovered_ids: 0, error: null }));
 await r.rpush(store.K.backfillQueue, "catfe3");
 const { Scanner } = await import("../src/scanner.js");
 const sc = new Scanner();
 sc.setTenants(tenants, { enabled: true, updated_at: "" });
-(sc as any).cursorStart = `${day(0)}T00:00:00Z`;
 await (sc as any).backfillStep(0);
 const bf = await store.loadBackfill("catfe3");
 assert(bf?.status === "fetching", `backfill moved to fetching: ${bf?.status}`);
 assert(bf!.candidates === 2 && bf!.tombstoned === 1 && bf!.linked === 0 && bf!.to_fetch === 1, `scan tallies ${JSON.stringify({ c: bf!.candidates, t: bf!.tombstoned, l: bf!.linked, f: bf!.to_fetch })}`);
-assert((await store.pendingLength("catfe3")) === 1 && bf!.uncovered_days.length === 3, "pending list + uncovered days recorded");
+assert((await store.pendingLength("catfe3")) === 1 && bf!.uncovered_ids === 50 && bf!.uncovered[0]!.from === 950 && bf!.uncovered[0]!.to === 999, `pending list + uncovered ids recorded (${bf!.uncovered_ids})`);
 assert((await r.hget(store.K.coverageReq, "catfe3")) !== null, "coverage request written for owner");
 // fetch phase with budget 1 hits the (blocked) osu! API -> error path, still counted, still finishes
 await (sc as any).backfillStep(1);

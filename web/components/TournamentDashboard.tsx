@@ -18,7 +18,31 @@ export default function TournamentDashboard({ slug }: { slug: string }) {
   const [errored, setErrored] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
   const [view, setView] = useState<"log" | "compact" | "teams">("compact");
+  const [viewer, setViewer] = useState(false); // members can browse the page exactly as a visitor sees it
+  const [mounted, setMounted] = useState(false);
   const inFlight = useRef(false);
+  const viewerKey = `lf:viewer:${slug}`;
+
+  useEffect(() => {
+    try {
+      setViewer(window.localStorage.getItem(viewerKey) === "1");
+    } catch {
+      /* storage unavailable */
+    }
+    setMounted(true);
+  }, [viewerKey]);
+
+  function toggleViewer() {
+    setViewer((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem(viewerKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   const refetch = useCallback(async () => {
     if (inFlight.current) return;
@@ -63,7 +87,8 @@ export default function TournamentDashboard({ slug }: { slug: string }) {
   const status = data?.status ?? null;
   const tenant = data?.tenant ?? null;
   const access = data?.access ?? null;
-  const canEdit = access?.can_edit ?? false;
+  const isMember = access?.can_edit ?? false;
+  const canEdit = isMember && !viewer; // what the page renders as editable right now
   const pill = derivePill(status, errored, !!data);
   const targetDelay = status?.target_delay_seconds ?? 4 * 3600;
 
@@ -83,15 +108,22 @@ export default function TournamentDashboard({ slug }: { slug: string }) {
               : "loading…"}
           </div>
         </div>
-        <span className="pill">
-          <span className={`dot ${pill.dot}`} />
-          {pill.label}
-        </span>
+        <div className="row" style={{ alignItems: "center", gap: 10 }}>
+          {isMember && mounted && (
+            <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={toggleViewer}>
+              {viewer ? "Show controls" : "View as visitor"}
+            </button>
+          )}
+          <span className="pill">
+            <span className={`dot ${pill.dot}`} />
+            {pill.label}
+          </span>
+        </div>
       </div>
 
       <HealthPanel status={status} clock={clock} errored={errored} compact />
 
-      {tenant && access && canEdit && (
+      {tenant && access && mounted && canEdit && (
         <TenantControlPanel
           tenant={tenant}
           access={access}
@@ -101,7 +133,7 @@ export default function TournamentDashboard({ slug }: { slug: string }) {
           onChanged={refetch}
         />
       )}
-      {tenant && access && !canEdit && (
+      {tenant && access && !isMember && (
         <div className="panel">
           <h2>Editing — members only</h2>
           <p className="hint" style={{ margin: 0 }}>

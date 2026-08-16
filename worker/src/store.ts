@@ -105,7 +105,7 @@ export async function loadTenants(): Promise<Tenant[]> {
         owner_id: Number.isInteger(t.owner_id) ? t.owner_id : 0,
         pool: Array.isArray(t.pool) ? t.pool.filter((n) => Number.isInteger(n) && n > 0) : [],
         enabled: t.enabled !== false,
-        start_day: isDay(t.start_day) ? t.start_day : dayOf(t.created_at),
+        start_id: Number.isInteger(t.start_id) && (t.start_id as number) > 0 ? (t.start_id as number) : null,
         created_at: t.created_at ?? new Date(0).toISOString(),
         updated_at: t.updated_at ?? new Date(0).toISOString(),
       });
@@ -202,7 +202,10 @@ export async function pendingLength(slug: string): Promise<number> {
 export async function clearPending(slug: string): Promise<void> {
   await redis.del(K.tBackfillPending(slug));
 }
-export async function setCoverageRequest(slug: string, req: { from_day: string; to_day: string; uncovered_days: string[]; at: string }): Promise<void> {
+export async function setCoverageRequest(
+  slug: string,
+  req: { from_id: number; to_id: number; uncovered: CoverageRange[]; uncovered_ids: number; at: string }
+): Promise<void> {
   await redis.hset(K.coverageReq, slug, JSON.stringify(req));
 }
 
@@ -365,40 +368,47 @@ export interface IndexCandidate {
 }
 
 /**
- * Scan the index for lobbies that played any map in `pool` between two days
- * (inclusive). Days with no bucket are reported as uncovered, EXCEPT days at
- * or after `pendingFromDay` (the sweep hasn't reached them yet — that's lag,
- * not a gap).
+ * Scan the index for lobbies in [fromId, toId] that played any map in `pool`.
+ * Only day buckets whose id span intersects the range are opened (day stats
+ * carry min/max id), so cost is bounded by retention, not by the range size.
  */
-export async function scanIndex(
-  fromDay: string,
-  toDay: string,
-  pool: Set<number>,
-  pendingFromDay: string | null
-): Promise<{ candidates: IndexCandidate[]; uncovered: string[] }> {
+export async function scanIndex(fromId: number, toId: number, pool: Set<number>): Promise<IndexCandidate[]> {
   const candidates: IndexCandidate[] = [];
-  const uncovered: string[] = [];
-  if (pool.size === 0 || fromDay > toDay) return { candidates, uncovered };
-  for (let day = fromDay; day <= toDay; day = addDays(day, 1)) {
-    if (!dayStats.has(day)) {
-      if (!(pendingFromDay && day >= pendingFromDay)) uncovered.push(day);
-      continue;
-    }
+  if (pool.size === 0 || fromId > toId) return candidates;
+  const days = [...dayStats.entries()].filter(([, s]) => s.max_id >= fromId && s.min_id <= toId).map(([d]) => d);
+  for (const day of days) {
     let cursor = "0";
     do {
       const [next, kv] = await redis.hscan(K.idxDay(day), cursor, "COUNT", 2000);
       cursor = next;
       for (let i = 0; i + 1 < kv.length; i += 2) {
         const id = Number(kv[i]);
-        if (!Number.isInteger(id)) continue;
+        if (!Number.isInteger(id) || id < fromId || id > toId) continue;
         const { maps, partial } = decodeMaps(kv[i + 1]!);
         if (maps.some((b) => pool.has(b))) candidates.push({ match_id: id, day, partial });
       }
     } while (cursor !== "0");
   }
   candidates.sort((a, b) => a.match_id - b.match_id);
-  return { candidates, uncovered };
+  return candidates;
 }
+
+/** Parts of [fromId, toId] that no sweep or walk has ever read (i.e. not backed by the index). */
+export function uncoveredRanges(fromId: number, toId: number): CoverageRange[] {
+  const gaps: CoverageRange[] = [];
+  if (fromId > toId) return gaps;
+  let cur = fromId;
+  for (const r of [...coverage].sort((a, b) => a.from - b.from)) {
+    if (r.to < cur) continue;
+    if (r.from > toId) break;
+    if (r.from > cur) gaps.push({ from: cur, to: r.from - 1 });
+    cur = Math.max(cur, r.to + 1);
+    if (cur > toId) break;
+  }
+  if (cur <= toId) gaps.push({ from: cur, to: toId });
+  return gaps;
+}
+export const rangeSize = (rs: CoverageRange[]): number => rs.reduce((n, r) => n + (r.to - r.from + 1), 0);
 
 // ---- global hit store + tenant references ----------------------------------
 

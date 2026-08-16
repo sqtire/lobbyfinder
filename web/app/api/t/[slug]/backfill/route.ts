@@ -14,16 +14,18 @@ export async function GET(_req: Request, { params }: Ctx) {
 
 /**
  * Queue a backfill: the worker scans the match index for this tournament's
- * pool over [from_day, to_day], links lobbies already stored, and reads only
- * the ones nobody has stored yet. No raw API walk is ever triggered here.
+ * pool over [from_id, to_id] (to_id defaults to the sweep cursor, like the old
+ * rescan), links lobbies already stored, and reads only the ones nobody has
+ * stored yet. No raw API walk is ever triggered here.
  */
 export async function POST(req: Request, { params }: Ctx) {
   const t = await requireTenant(params.slug, "edit");
   if (!t.ok) return t.res;
   if (t.tenant.pool.length === 0) return bad("set a beatmap pool first — a backfill matches lobbies against it");
-  const body = await readJson<{ from_day?: unknown; to_day?: unknown }>(req);
-  const from = typeof body?.from_day === "string" ? body.from_day : t.tenant.start_day;
-  const to = typeof body?.to_day === "string" ? body.to_day : new Date().toISOString().slice(0, 10);
+  const body = await readJson<{ from_id?: unknown; to_id?: unknown }>(req);
+  const from = body?.from_id !== undefined && body.from_id !== "" ? Number(body.from_id) : (t.tenant.start_id ?? NaN);
+  const to = body?.to_id !== undefined && body.to_id !== null && body.to_id !== "" ? Number(body.to_id) : null;
+  if (!Number.isInteger(from)) return bad("from_id required (a match ID; set a default start under Backfill)");
   const r = await enqueueBackfill(t.tenant.slug, from, to, t.access.user?.osu_id ?? null);
   if (!r.ok) return bad(r.error);
   return json({ ok: true, backfill: r.state, position: r.position });

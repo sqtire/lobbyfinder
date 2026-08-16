@@ -2,6 +2,8 @@ import { Redis } from "ioredis";
 import crypto from "crypto";
 import type {
   BackfillState,
+  CoverageRange,
+  CoverageRequest,
   GlobalConfig,
   Hit,
   OsuUser,
@@ -113,7 +115,7 @@ function sanitizeTenant(t: Partial<Tenant> & { slug: string }): Tenant {
     owner_id: Number.isInteger(t.owner_id) ? (t.owner_id as number) : 0,
     pool: sanitizePool(t.pool),
     enabled: t.enabled !== false,
-    start_day: isDay(t.start_day) ? t.start_day : (t.created_at ?? new Date().toISOString()).slice(0, 10),
+    start_id: Number.isInteger(t.start_id) && (t.start_id as number) > 0 ? (t.start_id as number) : null,
     created_at: t.created_at ?? new Date().toISOString(),
     updated_at: t.updated_at ?? new Date().toISOString(),
   };
@@ -152,7 +154,7 @@ export async function tenantSummaries(): Promise<TenantSummary[]> {
     enabled: t.enabled,
     pool_size: t.pool.length,
     hits: counts[i] ?? 0,
-    start_day: t.start_day,
+    start_id: t.start_id,
     created_at: t.created_at,
     updated_at: t.updated_at,
   }));
@@ -163,7 +165,7 @@ export async function createTenant(input: { slug: string; name: string; owner_id
   if (!validSlug(slug)) return { ok: false, error: "slug must be 3–32 chars of a-z, 0-9 and hyphens" };
   const c = client();
   const now = new Date().toISOString();
-  const tenant = sanitizeTenant({ slug, name: input.name, owner_id: input.owner_id, pool: [], enabled: true, start_day: now.slice(0, 10), created_at: now, updated_at: now });
+  const tenant = sanitizeTenant({ slug, name: input.name, owner_id: input.owner_id, pool: [], enabled: true, start_id: null, created_at: now, updated_at: now });
   const created = await c.set(K.tenant(slug), JSON.stringify(tenant), "NX");
   if (created !== "OK") return { ok: false, error: "that slug is taken" };
   await c
@@ -177,7 +179,7 @@ export async function createTenant(input: { slug: string; name: string; owner_id
 
 export async function updateTenant(
   slug: string,
-  patch: { name?: unknown; pool?: unknown; enabled?: unknown; start_day?: unknown }
+  patch: { name?: unknown; pool?: unknown; enabled?: unknown; start_id?: unknown }
 ): Promise<Tenant | null> {
   const cur = await getTenant(slug);
   if (!cur) return null;
@@ -186,7 +188,12 @@ export async function updateTenant(
     name: typeof patch.name === "string" && patch.name.trim() ? patch.name.trim().slice(0, 60) : cur.name,
     pool: patch.pool !== undefined ? sanitizePool(patch.pool) : cur.pool,
     enabled: patch.enabled !== undefined ? !!patch.enabled : cur.enabled,
-    start_day: isDay(patch.start_day) ? patch.start_day : cur.start_day,
+    start_id:
+      patch.start_id === null
+        ? null
+        : Number.isInteger(Number(patch.start_id)) && Number(patch.start_id) > 0
+          ? Number(patch.start_id)
+          : cur.start_id,
     updated_at: new Date().toISOString(),
   };
   await client().set(K.tenant(slug), JSON.stringify(next));
@@ -394,21 +401,23 @@ export async function backfillQueuePosition(slug: string): Promise<number | null
   return i >= 0 ? i + 1 : null;
 }
 export type EnqueueResult = { ok: true; state: BackfillState; position: number } | { ok: false; error: string };
-export async function enqueueBackfill(slug: string, fromDay: string, toDay: string, requestedBy: number | null): Promise<EnqueueResult> {
-  if (!isDay(fromDay) || !isDay(toDay)) return { ok: false, error: "dates must be YYYY-MM-DD" };
-  const today = todayUtc();
-  if (toDay > today) toDay = today;
-  if (fromDay > toDay) return { ok: false, error: "from must be on or before to (and not in the future)" };
-  const span = (Date.parse(`${toDay}T00:00:00Z`) - Date.parse(`${fromDay}T00:00:00Z`)) / 86400000 + 1;
-  if (span > 366) return { ok: false, error: "range too large (max 366 days)" };
+/** to_id defaults to (and is capped at) the sweep cursor — same semantics as the old rescan input. */
+export async function enqueueBackfill(slug: string, fromId: number, toId: number | null, requestedBy: number | null): Promise<EnqueueResult> {
+  if (!Number.isInteger(fromId) || fromId <= 0) return { ok: false, error: "from_id must be a positive integer match ID" };
+  const cursor = await liveWatermark();
+  if (cursor <= 0) return { ok: false, error: "the scanner has no position yet — let it run once first" };
+  let to = toId === null ? cursor : toId;
+  if (!Number.isInteger(to) || to <= 0) return { ok: false, error: "to_id must be a positive integer match ID" };
+  if (to > cursor) to = cursor; // nothing above the cursor has been read yet
+  if (fromId > to) return { ok: false, error: `from_id (${fromId}) is ahead of the scanner position (${cursor}); nothing to backfill` };
   const cur = await getBackfill(slug);
   if (cur && (cur.status === "queued" || cur.status === "scanning" || cur.status === "fetching")) {
     return { ok: false, error: `a backfill is already ${cur.status}` };
   }
   const state: BackfillState = {
     status: "queued",
-    from_day: fromDay,
-    to_day: toDay,
+    from_id: fromId,
+    to_id: to,
     requested_at: new Date().toISOString(),
     requested_by: requestedBy,
     started_at: null,
@@ -418,7 +427,8 @@ export async function enqueueBackfill(slug: string, fromDay: string, toDay: stri
     to_fetch: 0,
     fetched: 0,
     tombstoned: 0,
-    uncovered_days: [],
+    uncovered: [],
+    uncovered_ids: 0,
     error: null,
   };
   const c = client();
@@ -444,11 +454,14 @@ export async function getWalkQueue(): Promise<WalkState[]> {
   return raws.map((r) => parseJson<WalkState>(r)).filter((w): w is WalkState => !!w);
 }
 export type StartWalkResult = { ok: true; walk: WalkState; gap: number } | { ok: false; error: string };
-export async function enqueueWalk(fromId: number, requestedBy: number | null): Promise<StartWalkResult> {
+export async function enqueueWalk(fromId: number, toIdInput: number | null, requestedBy: number | null): Promise<StartWalkResult> {
   if (!Number.isInteger(fromId) || fromId <= 0) return { ok: false, error: "from_id must be a positive integer match ID" };
-  const toId = await liveWatermark();
-  if (toId <= 0) return { ok: false, error: "the rolling sweep has no position yet — let it run once first" };
-  if (fromId > toId) return { ok: false, error: `from_id (${fromId}) is ahead of the sweep position (${toId}); nothing to walk` };
+  const cursor = await liveWatermark();
+  if (cursor <= 0) return { ok: false, error: "the rolling sweep has no position yet — let it run once first" };
+  let toId = toIdInput === null ? cursor : toIdInput;
+  if (!Number.isInteger(toId) || toId <= 0) return { ok: false, error: "to_id must be a positive integer match ID" };
+  if (toId > cursor) toId = cursor;
+  if (fromId > toId) return { ok: false, error: `from_id (${fromId}) is ahead of the sweep position (${cursor}); nothing to walk` };
   const walk: WalkState = {
     id: crypto.randomBytes(6).toString("hex"),
     from_id: fromId,
@@ -480,12 +493,20 @@ export async function cancelWalk(id: string): Promise<boolean> {
   }
   return false;
 }
-export async function getCoverageRequests(): Promise<{ slug: string; from_day: string; to_day: string; uncovered_days: string[]; at: string }[]> {
+export async function getCoverageRequests(): Promise<CoverageRequest[]> {
   const raw = await client().hgetall(K.coverageReq);
-  const out: { slug: string; from_day: string; to_day: string; uncovered_days: string[]; at: string }[] = [];
+  const out: CoverageRequest[] = [];
   for (const [slug, json] of Object.entries(raw)) {
-    const r = parseJson<{ from_day: string; to_day: string; uncovered_days: string[]; at: string }>(json);
-    if (r) out.push({ slug, from_day: r.from_day, to_day: r.to_day, uncovered_days: Array.isArray(r.uncovered_days) ? r.uncovered_days : [], at: r.at });
+    const r = parseJson<{ from_id: number; to_id: number; uncovered: CoverageRange[]; uncovered_ids: number; at: string }>(json);
+    if (!r || !Number.isInteger(r.from_id) || !Number.isInteger(r.to_id)) continue; // ignore pre-id-range records
+    out.push({
+      slug,
+      from_id: r.from_id,
+      to_id: r.to_id,
+      uncovered: Array.isArray(r.uncovered) ? r.uncovered.filter((g) => Number.isInteger(g?.from) && Number.isInteger(g?.to)) : [],
+      uncovered_ids: Number.isFinite(r.uncovered_ids) ? r.uncovered_ids : 0,
+      at: r.at,
+    });
   }
   return out.sort((a, b) => (a.at < b.at ? 1 : -1));
 }
@@ -522,12 +543,15 @@ export async function adoptLegacy(slug: string, name: string, ownerId: number): 
 
   const entries = await c.zrange(K.hitsIdx, 0, -1, "WITHSCORES");
   let n = 0;
+  let minId = Infinity;
   for (let i = 0; i + 1 < entries.length; i += 2) {
     const id = entries[i]!;
     if (hidden.includes(id)) continue;
     await c.zadd(K.tHits(slug), Number(entries[i + 1]), id);
+    minId = Math.min(minId, Number(id));
     n++;
   }
+  if (Number.isFinite(minId) && tenant.start_id === null) tenant = (await updateTenant(slug, { start_id: minId })) ?? tenant;
   const roster = await getJson<Roster>(K.legacyRoster);
   if (roster && !(await getRoster(slug))) await saveRoster(slug, roster);
   await c.set(K.migrated, slug);

@@ -6,7 +6,7 @@ export interface Tenant {
   owner_id: number; // osu! user id
   pool: number[]; // beatmap (difficulty) ids
   enabled: boolean; // participates in live matching
-  start_day: string; // YYYY-MM-DD — default backfill start
+  start_id: number | null; // default backfill start (match id)
   created_at: string;
   updated_at: string;
 }
@@ -30,8 +30,8 @@ export interface WalkState {
 
 export interface BackfillState {
   status: "queued" | "scanning" | "fetching" | "done" | "cancelled" | "error";
-  from_day: string;
-  to_day: string;
+  from_id: number;
+  to_id: number;
   requested_at: string;
   requested_by: number | null;
   started_at: string | null;
@@ -41,13 +41,23 @@ export interface BackfillState {
   to_fetch: number;
   fetched: number;
   tombstoned: number;
-  uncovered_days: string[];
+  uncovered: CoverageRange[];
+  uncovered_ids: number;
   error: string | null;
 }
 
 export interface CoverageRange {
   from: number;
   to: number;
+}
+
+export interface CoverageRequest {
+  slug: string;
+  from_id: number;
+  to_id: number;
+  uncovered: CoverageRange[];
+  uncovered_ids: number;
+  at: string;
 }
 
 export interface Status {
@@ -178,7 +188,7 @@ export interface TenantSummary {
   enabled: boolean;
   pool_size: number;
   hits: number;
-  start_day: string;
+  start_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -204,7 +214,7 @@ export interface OwnerStatusResponse {
   global: GlobalConfig;
   walk: WalkState | null;
   walk_queue: WalkState[];
-  coverage_requests: { slug: string; from_day: string; to_day: string; uncovered_days: string[]; at: string }[];
+  coverage_requests: CoverageRequest[];
   tenants: TenantSummary[];
   legacy: { present: boolean; adopted_into: string | null };
 }

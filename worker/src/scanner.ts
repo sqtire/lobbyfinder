@@ -316,8 +316,8 @@ export class Scanner {
 
   private async scanForBackfill(slug: string, tenant: Tenant, state: BackfillState): Promise<void> {
     const pool = new Set(tenant.pool);
-    const pendingFrom = this.cursorStart ? store.dayOf(this.cursorStart) : null;
-    const { candidates, uncovered } = await store.scanIndex(state.from_day, state.to_day, pool, pendingFrom);
+    const candidates = await store.scanIndex(state.from_id, state.to_id, pool);
+    const uncovered = store.uncoveredRanges(state.from_id, state.to_id);
     const toFetch: number[] = [];
     let linked = 0;
     let tombstoned = 0;
@@ -339,12 +339,14 @@ export class Scanner {
     state.linked = linked;
     state.tombstoned = tombstoned;
     state.to_fetch = toFetch.length;
-    state.uncovered_days = uncovered;
+    state.uncovered = uncovered;
+    state.uncovered_ids = store.rangeSize(uncovered);
     if (uncovered.length) {
       await store.setCoverageRequest(slug, {
-        from_day: state.from_day,
-        to_day: state.to_day,
-        uncovered_days: uncovered,
+        from_id: state.from_id,
+        to_id: state.to_id,
+        uncovered,
+        uncovered_ids: state.uncovered_ids,
         at: new Date().toISOString(),
       });
     }
@@ -352,7 +354,7 @@ export class Scanner {
     state.status = "fetching"; // the fetch loop finishes immediately when nothing is pending
     await store.saveBackfill(slug, state);
     console.log(
-      `[backfill] ${slug} scanned ${state.from_day}..${state.to_day}: ${candidates.length} candidates, ${linked} linked, ${toFetch.length} to fetch, ${uncovered.length} uncovered days`
+      `[backfill] ${slug} scanned #${state.from_id}..#${state.to_id}: ${candidates.length} candidates, ${linked} linked, ${toFetch.length} to fetch, ${state.uncovered_ids} ids uncovered`
     );
   }
 

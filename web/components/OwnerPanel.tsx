@@ -32,6 +32,7 @@ export default function OwnerPanel() {
   const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [walkFrom, setWalkFrom] = useState("");
+  const [walkTo, setWalkTo] = useState("");
   const [adoptName, setAdoptName] = useState("Catfe Clash 3");
   const [adoptSlug, setAdoptSlug] = useState("catfe3");
 
@@ -87,8 +88,9 @@ export default function OwnerPanel() {
   const status = data?.status ?? null;
   const cursor = status?.roll_cursor ?? 0;
   const from = Number(walkFrom.trim());
-  const walkValid = Number.isInteger(from) && from > 0 && cursor > 0 && from <= cursor;
-  const gap = walkValid ? cursor - from + 1 : 0;
+  const to = walkTo.trim() ? Number(walkTo.trim()) : cursor;
+  const walkValid = Number.isInteger(from) && from > 0 && cursor > 0 && from <= Math.min(to, cursor);
+  const gap = walkValid ? Math.min(to, cursor) - from + 1 : 0;
 
   async function toggleGlobal() {
     if (!data) return;
@@ -100,13 +102,18 @@ export default function OwnerPanel() {
     if (ok) refetch();
     else flash("err", d?.error ?? "failed");
   }
-  async function startWalk(clearRequest?: string) {
+  async function startWalk(clearRequest?: string, fromOverride?: number, toOverride?: number) {
     setBusy(true);
-    const { ok, data: d } = await api("/api/owner/walk", "POST", { from_id: from, clear_request: clearRequest });
+    const { ok, data: d } = await api("/api/owner/walk", "POST", {
+      from_id: fromOverride ?? from,
+      to_id: toOverride ?? (walkTo.trim() ? to : null),
+      clear_request: clearRequest,
+    });
     setBusy(false);
     if (ok) {
       flash("ok", `Walk queued: ${fmtNum(d.gap)} match ids, #${d.walk.from_id} → #${d.walk.to_id}.`);
       setWalkFrom("");
+      setWalkTo("");
       refetch();
     } else flash("err", d?.error ?? "walk failed");
   }
@@ -174,6 +181,16 @@ export default function OwnerPanel() {
             placeholder="start match ID"
             value={walkFrom}
             onChange={(e) => setWalkFrom(e.target.value.replace(/[^0-9]/g, ""))}
+          />
+          <span className="hint">→</span>
+          <input
+            className="input"
+            style={{ maxWidth: 200 }}
+            inputMode="numeric"
+            placeholder={cursor ? `#${cursor} (cursor)` : "to match ID (optional)"}
+            value={walkTo}
+            onChange={(e) => setWalkTo(e.target.value.replace(/[^0-9]/g, ""))}
+            title="Optional upper bound; defaults to the sweep cursor"
           />
           <button className="btn blue" disabled={busy || !walkValid} onClick={() => startWalk()}>
             Queue walk
@@ -243,20 +260,35 @@ export default function OwnerPanel() {
       <div className="panel">
         <h2>Coverage requests</h2>
         <p className="hint" style={{ margin: "0 0 10px" }}>
-          Backfills that asked for days the index doesn&apos;t have. Queue a walk that reaches back far enough (find a match id from that
-          date on osu!), then the tournament re-runs its backfill.
+          Backfills that asked for match ids the scanner has never read. &quot;walk gap&quot; queues a walk over exactly that range; when it
+          finishes, the tournament re-runs its backfill and picks the lobbies up from the index.
         </p>
         {data && data.coverage_requests.length === 0 && <div className="hint">none</div>}
         {data?.coverage_requests.map((r) => (
           <div className="walk-row" key={r.slug}>
             <a href={`/t/${r.slug}`}>/t/{r.slug}</a>
             <span className="mono">
-              {r.from_day} → {r.to_day}
+              #{fmtNum(r.from_id)} → #{fmtNum(r.to_id)}
             </span>
             <span className="hint">
-              {r.uncovered_days.length} uncovered day{r.uncovered_days.length === 1 ? "" : "s"} ({r.uncovered_days.slice(0, 4).join(", ")}
-              {r.uncovered_days.length > 4 ? "…" : ""}) · {fmtAgo(r.at)}
+              {fmtNum(r.uncovered_ids)} ids never read (
+              {r.uncovered
+                .slice(0, 3)
+                .map((g) => `#${fmtNum(g.from)}–#${fmtNum(g.to)}`)
+                .join(", ")}
+              {r.uncovered.length > 3 ? "…" : ""}) · {fmtAgo(r.at)}
             </span>
+            {r.uncovered.map((g, i) => (
+              <button
+                key={i}
+                className="linkbtn"
+                disabled={busy}
+                onClick={() => startWalk(r.slug, g.from, g.to)}
+                title={`Queue a walk over #${g.from}–#${g.to} (${fmtNum(g.to - g.from + 1)} ids ≈ ${fmtDur((g.to - g.from + 1) * RATE_S)})`}
+              >
+                walk gap {i + 1}
+              </button>
+            ))}
             <button className="linkbtn" onClick={() => clearRequest(r.slug)}>
               dismiss
             </button>

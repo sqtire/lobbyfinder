@@ -9,9 +9,10 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user?.is_site_owner) return bad(user ? "forbidden" : "sign in required", user ? 403 : 401);
-  const body = await readJson<{ from_id?: unknown; clear_request?: unknown }>(req);
+  const body = await readJson<{ from_id?: unknown; to_id?: unknown; clear_request?: unknown }>(req);
   const fromId = Number(body?.from_id);
-  const r = await enqueueWalk(fromId, user.osu_id);
+  const toId = body?.to_id !== undefined && body.to_id !== null && body.to_id !== "" ? Number(body.to_id) : null;
+  const r = await enqueueWalk(fromId, toId, user.osu_id);
   if (!r.ok) return bad(r.error);
   if (typeof body?.clear_request === "string") await clearCoverageRequest(body.clear_request);
   return json(r);

@@ -50,7 +50,7 @@ export interface Tenant {
   owner_id: number; // osu! user id of the tournament owner
   pool: number[]; // beatmap (difficulty) ids
   enabled: boolean; // participate in live matching (union pool)
-  start_day: string; // YYYY-MM-DD, default backfill start
+  start_id: number | null; // default backfill start (match id)
   created_at: string;
   updated_at: string;
 }
@@ -79,8 +79,8 @@ export interface WalkState {
 
 export interface BackfillState {
   status: "queued" | "scanning" | "fetching" | "done" | "cancelled" | "error";
-  from_day: string; // YYYY-MM-DD inclusive
-  to_day: string; // YYYY-MM-DD inclusive
+  from_id: number; // match id range, inclusive — same unit as the old rescan
+  to_id: number; // snapshot of the sweep cursor when requested (or an explicit upper bound)
   requested_at: string;
   requested_by: number | null;
   started_at: string | null;
@@ -90,7 +90,8 @@ export interface BackfillState {
   to_fetch: number; // lobbies that needed a detail read
   fetched: number; // detail reads done so far
   tombstoned: number; // skipped because the tenant removed them
-  uncovered_days: string[]; // days in range with no index bucket
+  uncovered: CoverageRange[]; // parts of the range the index has never read (owner can walk them)
+  uncovered_ids: number; // total match ids in `uncovered`
   error: string | null;
 }
 

@@ -6,11 +6,11 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: { slug: string } };
 
-/** Pool / enabled / start_day (edit) and name (manage). */
+/** Pool / enabled / start_id (edit) and name (manage). */
 export async function POST(req: Request, { params }: Ctx) {
   const t = await requireTenant(params.slug, "edit");
   if (!t.ok) return t.res;
-  const patch = await readJson<{ pool?: unknown; enabled?: unknown; start_day?: unknown; name?: unknown }>(req);
+  const patch = await readJson<{ pool?: unknown; enabled?: unknown; start_id?: unknown; name?: unknown }>(req);
   if (!patch) return bad("invalid request");
   if (patch.name !== undefined && !t.access.can_manage) return bad("only the tournament owner can rename it", 403);
   const tenant = await updateTenant(t.tenant.slug, patch);

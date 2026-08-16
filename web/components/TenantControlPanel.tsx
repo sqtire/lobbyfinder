@@ -193,6 +193,12 @@ export default function TenantControlPanel({
 
 // ---- backfill (index-based; the tenant-facing replacement for "rescan") ----
 
+const fmtRanges = (rs: { from: number; to: number }[], max = 3) =>
+  rs
+    .slice(0, max)
+    .map((r) => (r.from === r.to ? `#${fmtNum(r.from)}` : `#${fmtNum(r.from)}–#${fmtNum(r.to)}`))
+    .join(", ") + (rs.length > max ? "…" : "");
+
 function BackfillPanel({
   tenant,
   status,
@@ -209,19 +215,25 @@ function BackfillPanel({
   flash: (k: "ok" | "err", m: string) => void;
 }) {
   const base = `/api/t/${tenant.slug}`;
-  const [from, setFrom] = useState(tenant.start_day);
-  const [to, setTo] = useState(today());
+  const [from, setFrom] = useState(tenant.start_id ? String(tenant.start_id) : "");
+  const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
   const active = !!backfill && (backfill.status === "queued" || backfill.status === "scanning" || backfill.status === "fetching");
-  const oldest = status?.index.oldest_day ?? null;
-  const beforeHistory = oldest !== null && from < oldest;
+  const cursor = status?.roll_cursor ?? 0;
+  const fromId = Number(from.trim());
+  const toId = to.trim() ? Number(to.trim()) : cursor;
+  const valid = Number.isInteger(fromId) && fromId > 0 && cursor > 0 && fromId <= Math.min(toId, cursor);
+  const span = valid ? Math.min(toId, cursor) - fromId + 1 : 0;
+  const cov = status?.index.coverage ?? [];
+  const oldestCovered = cov.length ? Math.min(...cov.map((r) => r.from)) : null;
+  const beforeIndex = valid && oldestCovered !== null && fromId < oldestCovered;
 
   async function start() {
     setBusy(true);
-    const { ok, data } = await api(`${base}/backfill`, "POST", { from_day: from, to_day: to });
+    const { ok, data } = await api(`${base}/backfill`, "POST", { from_id: fromId, to_id: to.trim() ? toId : null });
     setBusy(false);
     if (ok) {
-      flash("ok", data.position > 1 ? `Backfill queued (position ${data.position}).` : "Backfill queued — the worker will pick it up in a few seconds.");
+      flash("ok", data.position > 1 ? `Backfill queued (position ${data.position}).` : "Backfill queued — the worker picks it up within a few seconds.");
       onChanged();
     } else flash("err", data?.error ?? "backfill failed");
   }
@@ -231,32 +243,45 @@ function BackfillPanel({
     setBusy(false);
     onChanged();
   }
-  async function saveStartDay() {
-    const { ok, data } = await api(`${base}/config`, "POST", { start_day: from });
-    if (ok) flash("ok", `Default backfill start saved (${from}).`);
+  async function saveStart() {
+    const { ok, data } = await api(`${base}/config`, "POST", { start_id: fromId });
+    if (ok) flash("ok", `Default backfill start saved (#${fmtNum(fromId)}).`);
     else flash("err", data?.error ?? "save failed");
     onChanged();
   }
 
   return (
     <div>
-      <h2>Backfill from the shared index</h2>
+      <h2>Backfill from a match ID</h2>
       <p className="hint" style={{ margin: "0 0 10px" }}>
-        The scanner keeps an index of every lobby it has read (maps played per lobby, {status ? `${status.index.retention_days} days` : "rolling"} of history
-        {oldest ? `, currently back to ${oldest}` : ""}). A backfill scans that index for your pool over a date range, links lobbies that are already
-        stored, and reads only the ones nobody has stored yet — a few hundred requests at most, not a re-crawl of osu!.
+        Same input as the old rescan — a start match ID, up to where the sweep has reached (#{fmtNum(cursor)}) — but it never re-crawls
+        osu!. The scanner keeps an index of every lobby it has read (maps played per lobby, {status ? `${status.index.retention_days} days` : "rolling"} of
+        history); a backfill scans that index for your pool, links lobbies already stored, and reads only the ones nobody has stored yet. Use a
+        hit&apos;s <code>#id</code> (copy button in the Log tab) or any match id from the tournament&apos;s first day.
       </p>
       <div className="row" style={{ flexWrap: "wrap" }}>
-        <label className="hint">
-          from{" "}
-          <input className="input" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} disabled={active} style={{ width: 160 }} />
-        </label>
-        <label className="hint">
-          to{" "}
-          <input className="input" type="date" value={to} min={from} max={today()} onChange={(e) => setTo(e.target.value)} disabled={active} style={{ width: 160 }} />
-        </label>
+        <input
+          className="input"
+          style={{ maxWidth: 190 }}
+          inputMode="numeric"
+          placeholder="from match ID"
+          value={from}
+          onChange={(e) => setFrom(e.target.value.replace(/[^0-9]/g, ""))}
+          disabled={active}
+        />
+        <span className="hint">→</span>
+        <input
+          className="input"
+          style={{ maxWidth: 190 }}
+          inputMode="numeric"
+          placeholder={cursor ? `#${cursor} (sweep cursor)` : "to match ID (optional)"}
+          value={to}
+          onChange={(e) => setTo(e.target.value.replace(/[^0-9]/g, ""))}
+          disabled={active}
+          title="Optional upper bound; defaults to the sweep cursor"
+        />
         {!active ? (
-          <button className="btn blue" disabled={busy || !from || !to || from > to} onClick={start}>
+          <button className="btn blue" disabled={busy || !valid} onClick={start}>
             Start backfill
           </button>
         ) : (
@@ -264,15 +289,21 @@ function BackfillPanel({
             Cancel backfill
           </button>
         )}
-        {from !== tenant.start_day && !active && (
-          <button className="btn ghost" onClick={saveStartDay} title="Remember this as the tournament's default start date">
+        {valid && fromId !== tenant.start_id && !active && (
+          <button className="btn ghost" onClick={saveStart} title="Remember this as the tournament's default start id">
             Save as default start
           </button>
         )}
       </div>
-      {beforeHistory && !active && (
+      {from && !valid && !active && (
         <p className="hint" style={{ marginTop: 8, color: "var(--amber)" }}>
-          The index only goes back to {oldest}; days before that are reported as uncovered and flagged to the site owner, who can walk them in.
+          {cursor <= 0 ? "The sweep has no position yet." : `IDs must be between 1 and the sweep cursor (#${fmtNum(cursor)}), from ≤ to.`}
+        </p>
+      )}
+      {valid && !active && (
+        <p className="hint" style={{ marginTop: 8 }}>
+          ≈ {fmtNum(span)} match ids · index lookup is local; only lobbies that hit your pool and aren&apos;t stored yet cost a read
+          {beforeIndex ? ` · ids below #${fmtNum(oldestCovered!)} predate the index and will be reported as uncovered` : ""}
         </p>
       )}
       {backfill && <BackfillStatus b={backfill} position={position} />}
@@ -282,19 +313,20 @@ function BackfillPanel({
 
 function BackfillStatus({ b, position }: { b: BackfillState; position: number | null }) {
   const cls = b.status === "error" ? "err" : b.status === "done" ? "ok" : "";
+  const range = `#${fmtNum(b.from_id)} → #${fmtNum(b.to_id)}`;
   let line: string;
   switch (b.status) {
     case "queued":
-      line = `Queued${position ? ` (position ${position})` : ""} — ${b.from_day} → ${b.to_day}, requested ${fmtAgo(b.requested_at)}.`;
+      line = `Queued${position ? ` (position ${position})` : ""} — ${range}, requested ${fmtAgo(b.requested_at)}.`;
       break;
     case "scanning":
-      line = `Scanning the index for ${b.from_day} → ${b.to_day}…`;
+      line = `Scanning the index for ${range}…`;
       break;
     case "fetching":
       line = `Fetching ${fmtNum(b.fetched)} / ${fmtNum(b.to_fetch)} lobbies · ${fmtNum(b.linked)} linked from the store · ${fmtNum(b.candidates)} candidates.`;
       break;
     case "done":
-      line = `Done ${fmtAgo(b.finished_at)}: ${fmtNum(b.candidates)} candidates → ${fmtNum(b.linked)} linked, ${fmtNum(b.fetched)} fetched${
+      line = `Done ${fmtAgo(b.finished_at)}: ${range} · ${fmtNum(b.candidates)} candidates → ${fmtNum(b.linked)} linked, ${fmtNum(b.fetched)} fetched${
         b.tombstoned ? `, ${fmtNum(b.tombstoned)} skipped (removed)` : ""
       }.`;
       break;
@@ -307,10 +339,10 @@ function BackfillStatus({ b, position }: { b: BackfillState; position: number | 
   return (
     <div className={`toast ${cls}`} style={{ marginTop: 10 }}>
       {line}
-      {b.uncovered_days.length > 0 && (
+      {b.uncovered.length > 0 && (
         <div className="hint" style={{ marginTop: 4 }}>
-          {b.uncovered_days.length} day{b.uncovered_days.length === 1 ? "" : "s"} not in the index ({b.uncovered_days.slice(0, 5).join(", ")}
-          {b.uncovered_days.length > 5 ? "…" : ""}) — flagged to the site owner.
+          {fmtNum(b.uncovered_ids)} match ids in this range were never read by the scanner ({fmtRanges(b.uncovered)}) — flagged to the site
+          owner, who can walk them in.
         </div>
       )}
     </div>
