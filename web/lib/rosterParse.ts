@@ -7,6 +7,10 @@ import ExcelJS from "exceljs";
  *   1. Scan EVERY cell of every tab for an osu! profile reference, in any of
  *      three forms: a rich hyperlink on the cell, a HYPERLINK() formula, or a
  *      raw profile URL as text. Each match is a PLAYER ANCHOR.
+ *      Fallback (only when a tab has NO profile links at all): a rank tag such
+ *      as "#7348" next to a text cell is treated as a PLAYER ANCHOR too — the
+ *      text cell is the name, the player has no user_id and is matched by
+ *      username against scanned lobbies (same path as slug-only links).
  *   2. Cluster anchors into team blocks by row adjacency.
  *   3. Label each block from the nearest plausible text cell (same row to the
  *      left first, then up to a few rows above), filtering junk (ranks,
@@ -36,6 +40,8 @@ export interface ParseResult {
 }
 
 const PROFILE_RE = /osu\.ppy\.sh\/(?:users|u)\/([^\/\s"'?#\\)]+)/i;
+/** "#7348", "#14,393", "# 1234" — the rank tag mainsheets put next to a player name. */
+const RANK_RE = /^#\s?\d[\d,.]*$/;
 const LABEL_JUNK_WORDS =
   /\b(viewer|viewers|seed|avg|average|rank|ranks|broadcast|channel|schedule|bracket|qualifier|qualifiers|lobby|referee|staff|pool|list|find)\b/i;
 const DECOR_RE = /[║╚╝╔╗╠╣═─│┌┐└┘✦★☆•·▪▸▾◂|]+/g;
@@ -116,9 +122,15 @@ interface Anchor {
   user_id: number | null;
   name: string;
   via: "link" | "name";
+  src: "link" | "rank";
 }
 
-function parseWorksheet(ws: ExcelJS.Worksheet): { anchors: Anchor[]; teams: ParsedTeam[]; warnings: string[] } {
+function parseWorksheet(ws: ExcelJS.Worksheet): {
+  anchors: Anchor[];
+  teams: ParsedTeam[];
+  warnings: string[];
+  rank_mode: boolean;
+} {
   const cells = new Map<string, CellRec>();
   const key = (r: number, c: number) => `${r}:${c}`;
 
@@ -138,7 +150,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): { anchors: Anchor[]; teams: Pars
     const { user_id, slug } = classifyAnchor(rec.url);
     if (user_id === null && slug === null) continue;
     anchorAt.add(key(rec.row, rec.col));
-    anchors.push({ row: rec.row, col: rec.col, user_id, name: "", via: "link" });
+    anchors.push({ row: rec.row, col: rec.col, user_id, name: "", via: "link", src: "link" });
     // display name: own text, else adjacent (above / left / up-left / right), else slug, else id
     const own = rec.text;
     const cand = [own];
@@ -156,7 +168,34 @@ function parseWorksheet(ws: ExcelJS.Worksheet): { anchors: Anchor[]; teams: Pars
     a.name = nameCell ?? (slug ? slug.replace(/_/g, " ") : `user ${user_id}`);
   }
 
-  if (anchors.length === 0) return { anchors, teams: [], warnings: [] };
+  // ---- 1b. fallback: rank tags as anchors, ONLY if this tab has no profile links ----
+  // Keeps every link-bearing sheet byte-for-byte on the old path; link anchors and
+  // rank anchors are never mixed, so a player can't be counted twice.
+  let rankMode = false;
+  if (anchors.length === 0) {
+    for (const rec of cells.values()) {
+      if (rec.url || !RANK_RE.test(rec.text)) continue;
+      let name: string | null = null;
+      for (const [dr, dc] of [
+        [0, -1], // "name | #rank"  (most common)
+        [-1, 0], // name above rank
+        [0, 1], // "#rank | name"
+        [-1, -1],
+      ] as const) {
+        const n = cells.get(key(rec.row + dr, rec.col + dc));
+        if (n && !n.url && !RANK_RE.test(n.text) && isGoodName(n.text)) {
+          name = n.text;
+          break;
+        }
+      }
+      if (!name) continue;
+      anchorAt.add(key(rec.row, rec.col));
+      anchors.push({ row: rec.row, col: rec.col, user_id: null, name, via: "name", src: "rank" });
+    }
+    rankMode = anchors.length > 0;
+  }
+
+  if (anchors.length === 0) return { anchors, teams: [], warnings: [], rank_mode: false };
 
   // ---- 2. cluster into blocks by row adjacency ----
   anchors.sort((a, b) => a.row - b.row || a.col - b.col);
@@ -196,7 +235,9 @@ function parseWorksheet(ws: ExcelJS.Worksheet): { anchors: Anchor[]; teams: Pars
     const sameRow: CellRec[] = [];
     for (let c = minCol - 1; c >= 1; c--) {
       const rec = cells.get(key(topRow, c));
-      if (rec && !rec.url && rec.text && !isJunkLabel(rec.text)) sameRow.push(rec);
+      if (!rec || rec.url || !rec.text || isJunkLabel(rec.text)) continue;
+      if (usedNames.has(key(rec.row, rec.col))) continue; // a player's name cell is never the team label
+      sameRow.push(rec);
     }
     const long = sameRow.find((r) => stripDecor(r.text).length >= 3);
     const short = sameRow.find((r) => {
@@ -246,9 +287,15 @@ function parseWorksheet(ws: ExcelJS.Worksheet): { anchors: Anchor[]; teams: Pars
 
   if (fallbackN > 0) warnings.push(`${fallbackN} team name(s) guessed — review them in the preview.`);
   const nameOnly = teams.reduce((n, t) => n + t.players.filter((p) => p.user_id === null).length, 0);
-  if (nameOnly > 0)
+  if (rankMode) {
+    warnings.push(
+      `No osu! profile links in this tab — ${nameOnly} player(s) were detected from name + #rank cells and will be ` +
+        `matched to lobby data by username (n badge). A player who renamed since the sheet was written won't match.`
+    );
+  } else if (nameOnly > 0) {
     warnings.push(`${nameOnly} player(s) had a profile link without a numeric ID — they will be matched by username.`);
-  return { anchors, teams, warnings };
+  }
+  return { anchors, teams, warnings, rank_mode: rankMode };
 }
 
 /** Parse a whole workbook; the tab with the most anchors wins. */
@@ -265,11 +312,13 @@ export async function parseRosterXlsx(buf: Buffer): Promise<ParseResult> {
     } catch {
       continue;
     }
+    const describe = (name: string, p: ReturnType<typeof parseWorksheet>) =>
+      `${name} (${p.anchors.length} ${p.rank_mode ? "rank tags" : "links"})`;
     if (!best || parsed.anchors.length > best.parsed.anchors.length) {
-      if (best && best.parsed.anchors.length > 0) others.push(`${best.ws.name} (${best.parsed.anchors.length})`);
+      if (best && best.parsed.anchors.length > 0) others.push(describe(best.ws.name, best.parsed));
       best = { ws, parsed };
     } else if (parsed.anchors.length > 0) {
-      others.push(`${ws.name} (${parsed.anchors.length})`);
+      others.push(describe(ws.name, parsed));
     }
   }
 
@@ -278,14 +327,14 @@ export async function parseRosterXlsx(buf: Buffer): Promise<ParseResult> {
       sheet_name: best?.ws.name ?? "",
       teams: [],
       warnings: [
-        "No osu! profile links found in any tab. If player names in this sheet aren't hyperlinked to profiles, add links or use a tab that has them.",
+        "No osu! profile links and no name + #rank cells found in any tab. Hyperlink the player names to their osu! profiles, or use a tab that has links or #rank tags next to names.",
       ],
       anchor_count: 0,
     };
   }
 
   const warnings = [...best.parsed.warnings];
-  if (others.length) warnings.push(`Other tabs also contained profile links: ${others.join(", ")} — parsed "${best.ws.name}".`);
+  if (others.length) warnings.push(`Other tabs also contained players: ${others.join(", ")} — parsed "${best.ws.name}".`);
   return {
     sheet_name: best.ws.name,
     teams: best.parsed.teams,
