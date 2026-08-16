@@ -52,13 +52,10 @@ export default function Landing() {
 
   return (
     <main className="wrap">
-      <NavBar me={me} />
+      <NavBar />
       <div className="head">
         <div>
-          <h1 className="title">
-            MP <span className="accent">Pool</span> Scanner
-          </h1>
-          <div className="subtitle">
+          <div className="subtitle" style={{ maxWidth: 820 }}>
             Reads every osu! multiplayer lobby ~{fmtDur(targetDelay)} after it opens and logs the ones that play a tournament&apos;s pool ·
             one shared scanner, your own tournament · sign in with osu! to run one
           </div>

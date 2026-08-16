@@ -4,8 +4,8 @@ Watches **every** osu! multiplayer lobby and logs the ones that play a tournamen
 
 - **worker** — one process, one ≤1 req/sec limiter, three fronts in priority order:
   1. **rolling sweep** — walks every match once it is ~4h old (closed by then), writes it to the **match index** (`mpf:idx:<day>`: match id → maps played, ~1 MB/day, `INDEX_RETENTION_DAYS`), and stores full lobby detail *once* when any enabled tournament's pool intersects, linking a reference per tournament (tombstones honored). Runs regardless of how many tournaments exist — the index is the product.
-  2. **tenant backfill** — a tournament's "rescan": scan the index for its pool over a date range (no API), link lobbies already stored (no API), read only lobbies nobody has stored yet (1 request each). Queued FIFO, one active per tournament.
-  3. **owner walk** — the raw re-read of a match-id range into the index (1 request per osu! match). Site-owner only (`OWNER_OSU_IDS`); used to seed history / fill gaps after downtime. Output is shared by every tournament.
+  2. **tenant backfill** — a tournament's "rescan": scan the index for its pool over a match-id range (no API), link lobbies already stored (no API), read only lobbies nobody has stored yet (1 request each). Queued FIFO, one active per tournament. Ranges the scanner never read are reported as id gaps the owner can rescan.
+  3. **owner walk** ("Admin rescan" in the UI) — the raw re-read of a match-id range into the index (1 request per osu! match). Site-owner only (`OWNER_OSU_IDS`); used to seed history / fill gaps after downtime. Output is shared by every tournament.
   Background fronts get a batch sized by the sweep's health, so the sweep never falls behind because of them.
 - **web** — Next.js: landing (`/`), tournament pages (`/t/<slug>`), owner panel (`/owner`), APIs under `/api/t/<slug>/*` and `/api/owner/*`.
 - **Redis** — tenants, members, sessions, the match index, the global hit store + per-tenant references/tombstones/rosters, queues, telemetry.

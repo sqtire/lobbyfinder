@@ -342,7 +342,7 @@ function BackfillStatus({ b, position }: { b: BackfillState; position: number | 
       {b.uncovered.length > 0 && (
         <div className="hint" style={{ marginTop: 4 }}>
           {fmtNum(b.uncovered_ids)} match ids in this range were never read by the scanner ({fmtRanges(b.uncovered)}) — flagged to the site
-          owner, who can walk them in.
+          owner, who can run an admin rescan over them.
         </div>
       )}
     </div>

@@ -111,11 +111,11 @@ export default function OwnerPanel() {
     });
     setBusy(false);
     if (ok) {
-      flash("ok", `Walk queued: ${fmtNum(d.gap)} match ids, #${d.walk.from_id} → #${d.walk.to_id}.`);
+      flash("ok", `Admin rescan queued: ${fmtNum(d.gap)} match ids, #${d.walk.from_id} → #${d.walk.to_id}.`);
       setWalkFrom("");
       setWalkTo("");
       refetch();
-    } else flash("err", d?.error ?? "walk failed");
+    } else flash("err", d?.error ?? "rescan failed");
   }
   async function cancelWalk(id: string) {
     setBusy(true);
@@ -146,7 +146,7 @@ export default function OwnerPanel() {
           <h1 className="title">
             Owner <span className="accent">panel</span>
           </h1>
-          <div className="subtitle">The only place that spends raw osu! API budget on purpose: walks, the global switch, and coverage requests.</div>
+          <div className="subtitle">The only place that spends raw osu! API budget on purpose: admin rescans, the global switch, and coverage requests.</div>
         </div>
       </div>
 
@@ -159,7 +159,7 @@ export default function OwnerPanel() {
           </label>
         </div>
         <p className="hint" style={{ margin: "8px 0 0" }}>
-          Site-wide. When paused the worker makes no osu! requests at all — sweep, backfills and walks all wait. Tournament-level &quot;live
+          Site-wide. When paused the worker makes no osu! requests at all — sweep, backfills and admin rescans all wait. Tournament-level &quot;live
           matching&quot; toggles are separate and only affect what gets linked to that tournament.
         </p>
       </div>
@@ -167,11 +167,11 @@ export default function OwnerPanel() {
       <HealthPanel status={status} clock={clock} errored={errored} />
 
       <div className="panel">
-        <h2>API walk (raw rescan)</h2>
+        <h2>Admin rescan (raw API walk)</h2>
         <p className="hint" style={{ margin: "0 0 10px" }}>
-          Re-reads every osu! match from a start id up to the sweep cursor (#{fmtNum(cursor)}) into the index — 1 request per match, shared
-          with everyone. Use it to seed history before the index existed, or to fill a gap after downtime; tournaments then backfill from the
-          index for free. Walks queue FIFO and run below the sweep in priority.
+          The real rescan: re-reads every osu! match from a start id up to the sweep cursor (#{fmtNum(cursor)}) into the index — 1 request per
+          match, shared with everyone. Use it to seed history before the index existed, or to fill a gap after downtime; tournaments then
+          backfill from the index for free. Rescans queue FIFO and run below the sweep in priority.
         </p>
         <div className="row">
           <input
@@ -193,7 +193,7 @@ export default function OwnerPanel() {
             title="Optional upper bound; defaults to the sweep cursor"
           />
           <button className="btn blue" disabled={busy || !walkValid} onClick={() => startWalk()}>
-            Queue walk
+            Queue admin rescan
           </button>
           {walkValid && (
             <span className="hint">
@@ -260,8 +260,8 @@ export default function OwnerPanel() {
       <div className="panel">
         <h2>Coverage requests</h2>
         <p className="hint" style={{ margin: "0 0 10px" }}>
-          Backfills that asked for match ids the scanner has never read. &quot;walk gap&quot; queues a walk over exactly that range; when it
-          finishes, the tournament re-runs its backfill and picks the lobbies up from the index.
+          Backfills that asked for match ids the scanner has never read. &quot;rescan gap&quot; queues an admin rescan over exactly that range;
+          when it finishes, the tournament re-runs its backfill and picks the lobbies up from the index.
         </p>
         {data && data.coverage_requests.length === 0 && <div className="hint">none</div>}
         {data?.coverage_requests.map((r) => (
@@ -284,9 +284,9 @@ export default function OwnerPanel() {
                 className="linkbtn"
                 disabled={busy}
                 onClick={() => startWalk(r.slug, g.from, g.to)}
-                title={`Queue a walk over #${g.from}–#${g.to} (${fmtNum(g.to - g.from + 1)} ids ≈ ${fmtDur((g.to - g.from + 1) * RATE_S)})`}
+                title={`Queue an admin rescan over #${g.from}–#${g.to} (${fmtNum(g.to - g.from + 1)} ids ≈ ${fmtDur((g.to - g.from + 1) * RATE_S)})`}
               >
-                walk gap {i + 1}
+                rescan gap {i + 1}
               </button>
             ))}
             <button className="linkbtn" onClick={() => clearRequest(r.slug)}>

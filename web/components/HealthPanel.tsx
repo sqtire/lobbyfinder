@@ -72,7 +72,7 @@ export default function HealthPanel({
           </div>
           <div className="gauge-labels">
             <span>
-              owner walk #{fmtNum(walk?.from_id)} → #{fmtNum(walk?.to_id)}
+              admin rescan #{fmtNum(walk?.from_id)} → #{fmtNum(walk?.to_id)}
             </span>
             <span>
               {walkPct}% · ~{fmtNum(walk?.remaining)} left
