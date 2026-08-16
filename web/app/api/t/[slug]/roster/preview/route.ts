@@ -11,12 +11,13 @@ type Ctx = { params: { slug: string } };
 export async function POST(req: Request, { params }: Ctx) {
   const t = await requireTenant(params.slug, "edit");
   if (!t.ok) return t.res;
-  const body = await readJson<{ sheet_url?: unknown }>(req);
+  const body = await readJson<{ sheet_url?: unknown; orientation?: unknown }>(req);
   const sheetUrl = typeof body?.sheet_url === "string" ? body.sheet_url.trim() : "";
   if (!sheetUrl) return bad("no sheet URL provided");
+  const orientation = body?.orientation === "rows" || body?.orientation === "columns" ? body.orientation : "auto";
   try {
     const buf = await fetchSheetXlsx(sheetUrl);
-    const parsed = await parseRosterXlsx(buf);
+    const parsed = await parseRosterXlsx(buf, { orientation });
     if (parsed.anchor_count === 0) return bad(parsed.warnings[0] ?? "No profile links found in the sheet.", 422);
     return json({
       source_url: sheetUrl,
@@ -24,6 +25,8 @@ export async function POST(req: Request, { params }: Ctx) {
       teams: parsed.teams,
       warnings: parsed.warnings,
       anchor_count: parsed.anchor_count,
+      mode: parsed.mode,
+      orientation: parsed.orientation,
     });
   } catch (e) {
     return bad((e as Error).message, 502);

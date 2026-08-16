@@ -20,6 +20,8 @@ interface Preview {
   teams: PreviewTeam[];
   warnings: string[];
   anchor_count: number;
+  mode: "link" | "rank" | "grid" | "none";
+  orientation: "rows" | "columns" | null;
 }
 
 export default function RosterSync({ slug }: { slug: string }) {
@@ -52,14 +54,14 @@ export default function RosterSync({ slug }: { slug: string }) {
     void loadCurrent();
   }, [loadCurrent]);
 
-  async function fetchPreview() {
+  async function fetchPreview(orientation: "auto" | "rows" | "columns" = "auto") {
     setBusy(true);
     setPreview(null);
     try {
       const res = await fetch(`${base}/roster/preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sheet_url: url.trim() }),
+        body: JSON.stringify({ sheet_url: url.trim(), orientation }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `preview failed (${res.status})`);
@@ -162,7 +164,7 @@ export default function RosterSync({ slug }: { slug: string }) {
           onChange={(e) => setUrl(e.target.value)}
           disabled={busy}
         />
-        <button className="btn" onClick={fetchPreview} disabled={busy || !url.trim()}>
+        <button className="btn" onClick={() => fetchPreview()} disabled={busy || !url.trim()}>
           {busy && !preview ? "Fetching…" : "Fetch preview"}
         </button>
       </div>
@@ -170,8 +172,22 @@ export default function RosterSync({ slug }: { slug: string }) {
       {preview && (
         <div className="rs-preview">
           <p className="hint">
-            Parsed tab <b>{preview.sheet_name}</b> — {fmtNum(preview.anchor_count)} profile links,{" "}
-            {fmtNum(preview.teams.length)} teams. Rename teams or click players to exclude them, then commit.
+            Parsed tab <b>{preview.sheet_name}</b> —{" "}
+            {preview.mode === "grid"
+              ? `plain name grid, one team per ${preview.orientation === "columns" ? "column" : "row"}`
+              : preview.mode === "rank"
+                ? `${fmtNum(preview.anchor_count)} name + #rank cells`
+                : `${fmtNum(preview.anchor_count)} profile links`}
+            , {fmtNum(preview.teams.length)} teams. Rename teams or click players to exclude them, then commit.
+            {preview.mode === "grid" && (
+              <>
+                {" "}
+                Wrong shape?{" "}
+                <button className="linkbtn" onClick={() => fetchPreview(preview.orientation === "columns" ? "rows" : "columns")} disabled={busy}>
+                  parse as one team per {preview.orientation === "columns" ? "row" : "column"} instead
+                </button>
+              </>
+            )}
           </p>
           {preview.warnings.map((w, i) => (
             <div className="toast err" key={i} style={{ marginBottom: 8 }}>

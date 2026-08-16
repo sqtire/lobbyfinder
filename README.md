@@ -17,6 +17,10 @@ Watches **every** osu! multiplayer lobby and logs the ones that play a tournamen
 3. Push. The worker resumes its cursor and starts indexing; the old `mpf:config` pool no longer drives matching by itself.
 4. Sign in on `/`, open `/owner`, and **Adopt into tournament** — folds the legacy pool, lobbies, tombstones and roster into a tenant (copies only, idempotent). Within ~15 s the worker picks the tenant up and live matching continues under `/t/<slug>`. Then run one **Backfill** on that tournament for the current day to catch anything read between the deploy and the adoption.
 
+## Roster sync formats
+
+The mainsheet parser never assumes a layout. Per tab it tries, in order: (1) osu! profile links on player cells (rich links, `HYPERLINK()` formulas, raw URLs) — real user ids; (2) name + `#rank` cells; (3) a plain name grid — one team per row (`Team1: | name | name…`) or one team per column (team names in a header row, names below). Modes 2–3 match players by username against scanned lobbies. Mappool tables, schedules and single-column signup lists are rejected as grids; when the row/column orientation is ambiguous the preview offers a one-click flip. Whatever it finds is a preview the operator edits before committing.
+
 ## Local smoke test (worker)
 
 `REDIS_URL=redis://127.0.0.1:6379/1 OSU_CLIENT_ID=x OSU_CLIENT_SECRET=y npm run smoke` in `worker/` exercises the index, coverage, prune, hit store, tenant links and the backfill state machine against a local Redis (no osu! calls except the deliberately-failing fetch path).
