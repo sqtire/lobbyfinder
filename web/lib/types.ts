@@ -1,23 +1,61 @@
-export interface AppConfig {
-  target_beatmap_ids: number[];
+// Shapes shared with the worker (worker/src/types.ts) — keep in sync.
+
+export interface Tenant {
+  slug: string;
+  name: string;
+  owner_id: number; // osu! user id
+  pool: number[]; // beatmap (difficulty) ids
+  enabled: boolean; // participates in live matching
+  start_day: string; // YYYY-MM-DD — default backfill start
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GlobalConfig {
   enabled: boolean;
   updated_at: string;
 }
 
-export interface RescanStatus {
-  active: boolean;
-  status: "running" | "done" | "cancelled" | "idle";
-  from_id: number | null;
-  to_id: number | null;
-  cursor: number | null;
+export interface WalkState {
+  id: string;
+  from_id: number;
+  to_id: number;
+  cursor: number;
+  status: "queued" | "running" | "done" | "cancelled";
   processed: number;
-  remaining: number;
+  requested_at: string;
+  requested_by: number | null;
+  finished_at: string | null;
+}
+
+export interface BackfillState {
+  status: "queued" | "scanning" | "fetching" | "done" | "cancelled" | "error";
+  from_day: string;
+  to_day: string;
+  requested_at: string;
+  requested_by: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  candidates: number;
+  linked: number;
+  to_fetch: number;
+  fetched: number;
+  tombstoned: number;
+  uncovered_days: string[];
+  error: string | null;
+}
+
+export interface CoverageRange {
+  from: number;
+  to: number;
 }
 
 export interface Status {
   updated_at: string;
   enabled: boolean;
-  pool_size: number;
+  tenants_total: number;
+  tenants_enabled: number;
+  union_pool_size: number;
   roll_cursor: number;
   newest_seen_id: number | null;
   cursor_start_time: string | null;
@@ -29,7 +67,32 @@ export interface Status {
   processed_total: number;
   hits_total: number;
   token_expires_at: string | null;
-  rescan: RescanStatus;
+  index: {
+    retention_days: number;
+    days: number;
+    oldest_day: string | null;
+    newest_day: string | null;
+    matches: number;
+    coverage: CoverageRange[];
+  };
+  walk: {
+    active: boolean;
+    status: WalkState["status"] | "idle";
+    id: string | null;
+    from_id: number | null;
+    to_id: number | null;
+    cursor: number | null;
+    processed: number;
+    remaining: number;
+    queued: number;
+  };
+  backfill: {
+    active_slug: string | null;
+    status: BackfillState["status"] | "idle";
+    fetched: number;
+    to_fetch: number;
+    queued: number;
+  };
   last_error: string | null;
 }
 
@@ -71,20 +134,80 @@ export interface Hit {
   still_open: boolean;
   partial?: boolean;
   found_at: string;
-  source: "auto" | "rescan" | "live"; // "live" kept for hits stored before the rolling rewrite
-  games: HitGame[];
-  players?: PlayerStat[]; // absent on hits stored before player capture was added
-}
-
-export interface DataResponse {
-  status: Status | null;
-  config: AppConfig;
-  hits: Hit[];
-  authed: boolean;
-  hidden_count: number;
+  source: "auto" | "rescan" | "walk" | "backfill" | "live";
+  all_games?: boolean; // absent/false on legacy hits (games already filtered to the pool of the time)
+  games: HitGame[]; // in tenant responses: only games on that tenant's current pool
+  players?: PlayerStat[];
 }
 
 export const MAX_POOL = 30;
+
+// ---- users, sessions, membership ----
+
+export interface OsuUser {
+  osu_id: number;
+  username: string;
+  avatar_url: string | null;
+  country_code: string | null;
+  first_login: string;
+  last_login: string;
+}
+
+export type TenantRole = "owner" | "staff";
+
+export interface SessionUser {
+  osu_id: number;
+  username: string;
+  avatar_url: string | null;
+  is_site_owner: boolean;
+}
+
+export interface TenantAccess {
+  user: SessionUser | null;
+  role: TenantRole | null; // explicit membership role
+  can_edit: boolean; // pool, backfill, roster, lobby removal
+  can_manage: boolean; // members, rename, delete
+  is_site_owner: boolean;
+}
+
+export interface TenantSummary {
+  slug: string;
+  name: string;
+  owner_id: number;
+  owner_name: string | null;
+  enabled: boolean;
+  pool_size: number;
+  hits: number;
+  start_day: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MeResponse {
+  user: SessionUser | null;
+  memberships: { slug: string; name: string; role: TenantRole }[];
+}
+
+export interface TenantDataResponse {
+  tenant: Tenant;
+  status: Status | null;
+  hits: Hit[];
+  hits_total: number;
+  hidden_count: number;
+  backfill: BackfillState | null;
+  backfill_position: number | null; // 1-based place in the queue while queued
+  access: TenantAccess;
+}
+
+export interface OwnerStatusResponse {
+  status: Status | null;
+  global: GlobalConfig;
+  walk: WalkState | null;
+  walk_queue: WalkState[];
+  coverage_requests: { slug: string; from_day: string; to_day: string; uncovered_days: string[]; at: string }[];
+  tenants: TenantSummary[];
+  legacy: { present: boolean; adopted_into: string | null };
+}
 
 // ---- team roster (synced from a mainsheet) + Teams grid ----
 

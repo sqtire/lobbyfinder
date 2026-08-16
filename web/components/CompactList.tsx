@@ -11,11 +11,13 @@ export default function CompactList({
   authed,
   hiddenCount,
   onChanged,
+  apiBase,
 }: {
   hits: Hit[];
   authed: boolean;
   hiddenCount: number;
   onChanged: () => void;
+  apiBase: string; // e.g. /api/t/<slug>
 }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -41,7 +43,7 @@ export default function CompactList({
   async function post(payload: object) {
     setBusy(true);
     try {
-      const res = await fetch("/api/hits", {
+      const res = await fetch(`${apiBase}/hits`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -74,7 +76,7 @@ export default function CompactList({
             Remove {selected.size > 0 ? `${selected.size} selected` : "selected"}
           </button>
           <span className="ctable-actions-hint">
-            Tombstoned lobbies won&apos;t come back, even on rescan.
+            Removed lobbies are tombstoned for this tournament — they won&apos;t come back, even on backfill.
             {hiddenCount > 0 && (
               <>
                 {" "}
@@ -124,7 +126,7 @@ export default function CompactList({
                   className={`caret ${isOpen ? "open" : ""} ${hasPlayers ? "" : "disabled"}`}
                   onClick={() => hasPlayers && toggleOpen(h.match_id)}
                   aria-label={isOpen ? "Hide players" : "Show players"}
-                  title={hasPlayers ? (isOpen ? "Hide players" : "Show players") : "No player data — rescan to populate"}
+                  title={hasPlayers ? (isOpen ? "Hide players" : "Show players") : "No player data — backfill to populate"}
                   disabled={!hasPlayers}
                 >
                   {hasPlayers ? (

@@ -1,13 +1,14 @@
 {
   "name": "osu-mp-scanner-worker",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "Always-on osu! multiplayer scanner: dual-front (live + rescan) lobby search against a live-editable beatmap pool.",
+  "description": "Always-on osu! multiplayer scanner: rolling sweep that indexes every lobby, matches the union of tournament pools, and serves tenant backfills + owner-only API walks.",
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.mts"
   },
   "dependencies": {
     "ioredis": "^5.4.1"

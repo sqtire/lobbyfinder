@@ -9,28 +9,28 @@ const fmtScore = (n: number) => n.toLocaleString("en-US");
 const fmtAcc = (a: number) => `${(a * 100).toFixed(2)}%`;
 const dispMods = (mods: string[]) => mods.filter((m) => m !== "NF").join("");
 
-export default function TeamsGrid() {
+export default function TeamsGrid({ slug }: { slug: string }) {
   const [data, setData] = useState<TeamsGridData | null>(null);
   const [error, setError] = useState(false);
   const [open, setOpen] = useState<string | null>(null); // "teamIdx:playerIdx:mapIdx"
 
   useEffect(() => {
     let live = true;
-    fetch("/api/teams", { cache: "no-store" })
+    fetch(`/api/t/${slug}/teams`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d) => live && setData(d as TeamsGridData))
       .catch(() => live && setError(true));
     return () => {
       live = false;
     };
-  }, []);
+  }, [slug]);
 
   if (error) return <div className="empty">Couldn&apos;t load the teams grid.</div>;
   if (!data) return <div className="empty">Loading…</div>;
   if (!data.roster_synced_at || data.teams.length === 0) {
     return (
       <div className="empty">
-        No roster synced yet. Unlock editing and sync a tournament mainsheet to populate this tab.
+        No roster synced yet. A tournament member can sync a mainsheet from the control panel to populate this tab.
       </div>
     );
   }

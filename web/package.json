@@ -1,8 +1,8 @@
 {
   "name": "osu-mp-scanner-web",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Control panel + public results for the osu! MP pool scanner.",
+  "description": "Multi-tenant control panel + public results for the osu! MP pool scanner (osu! OAuth login).",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

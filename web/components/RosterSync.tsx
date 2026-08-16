@@ -22,7 +22,8 @@ interface Preview {
   anchor_count: number;
 }
 
-export default function RosterSync() {
+export default function RosterSync({ slug }: { slug: string }) {
+  const base = `/api/t/${slug}`;
   const [roster, setRoster] = useState<Roster | null>(null);
   const [url, setUrl] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -37,7 +38,7 @@ export default function RosterSync() {
 
   const loadCurrent = useCallback(async () => {
     try {
-      const res = await fetch("/api/roster", { cache: "no-store" });
+      const res = await fetch(`${base}/roster`, { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as { roster: Roster | null };
       setRoster(data.roster);
@@ -45,7 +46,7 @@ export default function RosterSync() {
     } catch {
       /* panel stays usable */
     }
-  }, []);
+  }, [base]);
 
   useEffect(() => {
     void loadCurrent();
@@ -55,7 +56,7 @@ export default function RosterSync() {
     setBusy(true);
     setPreview(null);
     try {
-      const res = await fetch("/api/roster/preview", {
+      const res = await fetch(`${base}/roster/preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sheet_url: url.trim() }),
@@ -97,7 +98,7 @@ export default function RosterSync() {
       .filter((t) => t.name && t.players.length > 0);
     setBusy(true);
     try {
-      const res = await fetch("/api/roster", {
+      const res = await fetch(`${base}/roster`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source_url: preview.source_url, sheet_name: preview.sheet_name, teams }),
@@ -117,7 +118,7 @@ export default function RosterSync() {
   async function clearRoster() {
     if (!confirm("Clear the synced roster? The Teams grid will empty until you sync again.")) return;
     setBusy(true);
-    await fetch("/api/roster", { method: "DELETE" });
+    await fetch(`${base}/roster`, { method: "DELETE" });
     setBusy(false);
     setRoster(null);
     flash("ok", "Roster cleared.");

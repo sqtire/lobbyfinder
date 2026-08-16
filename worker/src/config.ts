@@ -1,7 +1,8 @@
 /**
  * All worker tuning is env-driven so the same image runs unchanged on Railway.
- * NOTE: the target beatmap pool is NOT here — it lives in Redis (`mpf:config`)
- * and is edited live from the web control panel.
+ * NOTE: beatmap pools are NOT here — every tenant (tournament) keeps its own
+ * pool in Redis (`mpf:t:<slug>`), edited live from the web app; the worker
+ * matches every lobby against the UNION of enabled tenants' pools.
  */
 
 function req(name: string): string {
@@ -57,11 +58,20 @@ export const config = {
   rollSeedLookback: num("ROLL_SEED_LOOKBACK", 12000),
 
   // --- Budget split (matches processed per front per loop cycle) -----------
-  // The rolling sweep and the on-demand rescan share the single rate limiter,
-  // so total stays <=1 req/sec regardless. Equal values => ~50/50 when a manual
-  // rescan is running; otherwise the rolling sweep gets the whole budget.
+  // The rolling sweep always goes first. Background fronts (tenant backfill
+  // detail fetches, then owner API walks) get a batch sized by how the sweep
+  // is doing: full when parked at the boundary, moderate when on schedule,
+  // minimal when it has fallen behind. Everything shares the single limiter.
   rollBatch: num("ROLL_BATCH", 4),
-  rescanBatch: num("RESCAN_BATCH", 4),
+  bgBatchParked: num("BG_BATCH_PARKED", 8),
+  bgBatchOnSchedule: num("BG_BATCH_ON_SCHEDULE", 4),
+  bgBatchBehind: num("BG_BATCH_BEHIND", 1),
+
+  // --- Match index (every match the sweep/walks read: id -> maps played) ---
+  // Day buckets older than this are pruned; tenant backfills can only reach
+  // back this far. ~1 MB/day at typical osu! multiplayer volume.
+  indexRetentionDays: num("INDEX_RETENTION_DAYS", 90),
+  pruneEveryMs: num("INDEX_PRUNE_EVERY_MS", 60 * 60 * 1000),
 
   // --- Cadences ---
   edgeProbeMs: num("EDGE_PROBE_MS", 60000), // how often to refresh the live-edge id
