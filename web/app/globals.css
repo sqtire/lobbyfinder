@@ -1204,3 +1204,40 @@ select.input {
 input[type="date"].input {
   color-scheme: inherit;
 }
+
+/* ---- stats tab ---- */
+.stats-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tgrid-wrap.dim {
+  opacity: 0.6;
+}
+table.stable td.cell {
+  white-space: nowrap;
+}
+.place {
+  font-weight: 700;
+}
+.place.p1 {
+  color: var(--amber);
+}
+.place.p2 {
+  color: var(--muted);
+}
+.place.p3 {
+  color: #c07a3a;
+}
+.place.p4 {
+  color: var(--text);
+  font-weight: 500;
+}
+.lb-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+  white-space: nowrap;
+}

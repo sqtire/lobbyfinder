@@ -7,8 +7,17 @@ export interface Tenant {
   pool: number[]; // beatmap (difficulty) ids
   enabled: boolean; // participates in live matching
   start_id: number | null; // default backfill start (match id)
+  stats: StatsSettingsLite; // saved defaults for the Stats tab (see lib/stats.ts)
   created_at: string;
   updated_at: string;
+}
+
+/** Mirror of lib/stats.ts StatsSettings (kept here so client bundles don't import the engine). */
+export interface StatsSettingsLite {
+  method: "placements" | "maxpct" | "pctdiff" | "zsum" | "zipf";
+  count_failed: boolean;
+  players_per_map: number;
+  mc_mod_scaling: boolean;
 }
 
 export interface GlobalConfig {

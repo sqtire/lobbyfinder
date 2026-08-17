@@ -21,6 +21,10 @@ Watches **every** osu! multiplayer lobby and logs the ones that play a tournamen
 
 The mainsheet parser never assumes a layout. Per tab it tries, in order: (1) osu! profile links on player cells (rich links, `HYPERLINK()` formulas, raw URLs) — real user ids; (2) name + `#rank` cells; (3) a plain name grid — one team per row (`Team1: | name | name…`) or one team per column (team names in a header row, names below). Modes 2–3 match players by username against scanned lobbies. Mappool tables, schedules and single-column signup lists are rejected as grids; when the row/column orientation is ambiguous the preview offers a one-click flip. Whatever it finds is a preview the operator edits before committing.
 
+## Stats tab + exports
+
+Every tournament page has a **Stats** tab computed from its logged lobbies, pool and roster (server-side, `lib/stats.ts`), replicating the Stats v5 qualifier sheet: per map a team's score is the sum of its members' best scores (optionally capped to N scores), placements are `RANK` (ties share, unplayed = last), and the ranking method is selectable — Z-Sum (Σ Φ(z), sample stdev), average placements, max %, % difference or Zipfian — with ties broken by average score. Also: per-map team and player leaderboards, performance (match cost `2/(n+2)·Σ score/field-average`, MVPs, played %, averages, highest score) and mappool stats. Members can save the method/settings as the tournament default and export the whole thing as an `.xlsx` workbook (Summary, Team/Player placements, Team/Player leaderboards, Performance, Mappool, Grid) or the Teams-grid viewport as `.csv`. Validated against the 5USC26 qualifier sheet: 71/71 team placement rows, 380/380 player rows and match costs match exactly (with the sheet's mod-scaling quirk switched on).
+
 ## Local smoke test (worker)
 
 `REDIS_URL=redis://127.0.0.1:6379/1 OSU_CLIENT_ID=x OSU_CLIENT_SECRET=y npm run smoke` in `worker/` exercises the index, coverage, prune, hit store, tenant links and the backfill state machine against a local Redis (no osu! calls except the deliberately-failing fetch path).

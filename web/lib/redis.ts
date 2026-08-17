@@ -2,6 +2,7 @@ import { Redis } from "ioredis";
 import crypto from "crypto";
 import type {
   BackfillState,
+  StatsSettingsLite,
   CoverageRange,
   CoverageRequest,
   GlobalConfig,
@@ -116,6 +117,7 @@ function sanitizeTenant(t: Partial<Tenant> & { slug: string }): Tenant {
     pool: sanitizePool(t.pool),
     enabled: t.enabled !== false,
     start_id: Number.isInteger(t.start_id) && (t.start_id as number) > 0 ? (t.start_id as number) : null,
+    stats: sanitizeStatsLite(t.stats),
     created_at: t.created_at ?? new Date().toISOString(),
     updated_at: t.updated_at ?? new Date().toISOString(),
   };
@@ -165,7 +167,7 @@ export async function createTenant(input: { slug: string; name: string; owner_id
   if (!validSlug(slug)) return { ok: false, error: "slug must be 3–32 chars of a-z, 0-9 and hyphens" };
   const c = client();
   const now = new Date().toISOString();
-  const tenant = sanitizeTenant({ slug, name: input.name, owner_id: input.owner_id, pool: [], enabled: true, start_id: null, created_at: now, updated_at: now });
+  const tenant = sanitizeTenant({ slug, name: input.name, owner_id: input.owner_id, pool: [], enabled: true, start_id: null, stats: sanitizeStatsLite(null), created_at: now, updated_at: now });
   const created = await c.set(K.tenant(slug), JSON.stringify(tenant), "NX");
   if (created !== "OK") return { ok: false, error: "that slug is taken" };
   await c
@@ -179,7 +181,7 @@ export async function createTenant(input: { slug: string; name: string; owner_id
 
 export async function updateTenant(
   slug: string,
-  patch: { name?: unknown; pool?: unknown; enabled?: unknown; start_id?: unknown }
+  patch: { name?: unknown; pool?: unknown; enabled?: unknown; start_id?: unknown; stats?: unknown }
 ): Promise<Tenant | null> {
   const cur = await getTenant(slug);
   if (!cur) return null;
@@ -194,6 +196,7 @@ export async function updateTenant(
         : Number.isInteger(Number(patch.start_id)) && Number(patch.start_id) > 0
           ? Number(patch.start_id)
           : cur.start_id,
+    stats: patch.stats !== undefined ? sanitizeStatsLite({ ...cur.stats, ...(patch.stats as object) }) : cur.stats,
     updated_at: new Date().toISOString(),
   };
   await client().set(K.tenant(slug), JSON.stringify(next));
@@ -214,6 +217,18 @@ export async function deleteTenant(slug: string): Promise<boolean> {
   for (const m of members) multi.srem(K.userTenants(Number(m)), slug);
   await multi.exec();
   return true;
+}
+
+const STATS_METHODS = new Set(["placements", "maxpct", "pctdiff", "zsum", "zipf"]);
+export function sanitizeStatsLite(v: unknown): StatsSettingsLite {
+  const o = (v ?? {}) as Partial<StatsSettingsLite>;
+  const ppm = Number(o.players_per_map);
+  return {
+    method: STATS_METHODS.has(o.method as string) ? (o.method as StatsSettingsLite["method"]) : "zsum",
+    count_failed: o.count_failed === undefined ? true : !!o.count_failed,
+    players_per_map: Number.isInteger(ppm) && ppm >= 0 && ppm <= 16 ? ppm : 0,
+    mc_mod_scaling: !!o.mc_mod_scaling,
+  };
 }
 
 /** Sanitize a user-submitted pool: ints, positive, deduped, capped. */

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireTenant } from "@/lib/api";
-import { getAllTenantHits } from "@/lib/redis";
+import { getAllTenantHits, getRoster } from "@/lib/redis";
+import { computeStats, sanitizeStatsSettings } from "@/lib/stats";
+import { buildGridRows, gridCsv, statsWorkbook } from "@/lib/statsExport";
 import type { Hit } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -34,10 +36,40 @@ function file(content: string, filename: string, type: string) {
 export async function GET(req: Request, { params }: Ctx) {
   const t = await requireTenant(params.slug, "edit");
   if (!t.ok) return t.res;
-  const format = new URL(req.url).searchParams.get("format") ?? "json";
+  const url = new URL(req.url);
+  const format = url.searchParams.get("format") ?? "json";
   const hits = await getAllTenantHits(t.tenant.slug, t.tenant.pool);
   const stamp = new Date().toISOString().slice(0, 10);
   const base = `lobbyfinder-${t.tenant.slug}`;
+
+  // the Teams-grid viewport (best score per player per pool map)
+  if (format === "grid") {
+    const roster = await getRoster(t.tenant.slug);
+    return file(gridCsv(t.tenant.pool, hits, roster), `${base}-grid-${stamp}.csv`, "text/csv");
+  }
+
+  // the full stats workbook (placements, leaderboards, performance, mappool, grid)
+  if (format === "stats") {
+    const roster = await getRoster(t.tenant.slug);
+    const q = url.searchParams;
+    const settings = sanitizeStatsSettings({
+      ...t.tenant.stats,
+      ...(q.get("method") ? { method: q.get("method") } : {}),
+      ...(q.get("count_failed") !== null ? { count_failed: q.get("count_failed") === "1" } : {}),
+      ...(q.get("players_per_map") !== null ? { players_per_map: Number(q.get("players_per_map")) } : {}),
+      ...(q.get("mc_mod_scaling") !== null ? { mc_mod_scaling: q.get("mc_mod_scaling") === "1" } : {}),
+    });
+    const stats = computeStats({ pool: t.tenant.pool, hits, roster, settings });
+    const grid = buildGridRows(t.tenant.pool, hits, roster);
+    const buf = await statsWorkbook({ tournament: t.tenant.name, slug: t.tenant.slug, stats, grid });
+    return new NextResponse(new Uint8Array(buf), {
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-disposition": `attachment; filename="${base}-stats-${stamp}.xlsx"`,
+        "cache-control": "no-store",
+      },
+    });
+  }
 
   if (format === "players") {
     const lines = [row(["match_id", "lobby_name", "lobby_url", "start_time", "user_id", "username", "maps_played"])];

@@ -9,6 +9,7 @@ import TenantControlPanel from "./TenantControlPanel";
 import ResultsList from "./ResultsList";
 import CompactList from "./CompactList";
 import TeamsGrid from "./TeamsGrid";
+import StatsPanel from "./StatsPanel";
 
 const POLL_MS = 10000;
 
@@ -17,7 +18,7 @@ export default function TournamentDashboard({ slug }: { slug: string }) {
   const [notFound, setNotFound] = useState(false);
   const [errored, setErrored] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
-  const [view, setView] = useState<"log" | "compact" | "teams">("compact");
+  const [view, setView] = useState<"log" | "compact" | "teams" | "stats">("compact");
   const [viewer, setViewer] = useState(false); // members can browse the page exactly as a visitor sees it
   const [mounted, setMounted] = useState(false);
   const inFlight = useRef(false);
@@ -160,18 +161,28 @@ export default function TournamentDashboard({ slug }: { slug: string }) {
             <button className={`tab ${view === "teams" ? "active" : ""}`} onClick={() => setView("teams")}>
               Teams
             </button>
+            <button className={`tab ${view === "stats" ? "active" : ""}`} onClick={() => setView("stats")}>
+              Stats
+            </button>
           </div>
-          {view !== "teams" && (
+          {view !== "teams" && view !== "stats" && (
             <span className="hint mono">
               {fmtNum(data?.hits_total ?? data?.hits.length ?? 0)} lobbies
               {data && data.hits.length >= 200 ? " · showing newest 200" : ""}
             </span>
+          )}
+          {view === "teams" && canEdit && (
+            <a className="btn ghost" style={{ padding: "4px 10px", fontSize: 12 }} href={`/api/t/${slug}/export?format=grid`} download>
+              Export grid (.csv)
+            </a>
           )}
         </div>
         {view === "compact" ? (
           <CompactList hits={data?.hits ?? []} authed={canEdit} hiddenCount={data?.hidden_count ?? 0} onChanged={refetch} apiBase={`/api/t/${slug}`} />
         ) : view === "teams" ? (
           <TeamsGrid slug={slug} />
+        ) : view === "stats" ? (
+          tenant ? <StatsPanel slug={slug} canEdit={canEdit} savedSettings={tenant.stats} /> : <div className="empty">Loading…</div>
         ) : (
           <ResultsList hits={data?.hits ?? []} />
         )}
