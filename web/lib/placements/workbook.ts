@@ -259,8 +259,8 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
     res.maps.forEach((m) => head.push(`${m.label} adj`, `${m.label} adj #`, `${m.label} value`));
     ws.addRow(head);
     const headNo = ws.rowCount;
-    for (const p of res.placements) {
-      const row: unknown[] = [p.rank, p.player.name, p.points, num(p.performance), num(p.avg_value), p.unique_maps];
+    for (const p of [...res.placements, ...(res.hidden_placements ?? [])]) {
+      const row: unknown[] = [p.rank || "hidden", p.player.name, p.points, num(p.performance), num(p.avg_value), p.unique_maps];
       for (const m of res.maps) {
         const c = res.grid.cells[p.player.key]?.[m.key] ?? null;
         row.push(c ? c.tiebreak.adjusted : "", c ? c.tiebreak.placement : "", c && c.tiebreak.value !== null ? c.tiebreak.value : "");
@@ -359,7 +359,7 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
       ["Matches", res.counts.matches],
       ["Lobbies read", res.counts.rooms],
       ["Maps counted / excluded", `${res.counts.games_counted} / ${res.counts.games_excluded}`],
-      ["Players", res.counts.players],
+      ["Players", res.counts.hidden ? `${res.counts.players} ranked (+${res.counts.hidden} hidden from rankings)` : res.counts.players],
       [],
       ["Formula"],
       ...res.formula.map((f) => [f]),
@@ -374,6 +374,7 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
       ["Count failed scores", res.settings.count_failed ? "yes" : "no"],
       ["Count maps before a forfeit", res.settings.forfeit_lobby_maps ? "yes" : "no"],
       ["Excluded items", res.settings.excluded_items.join(", ") || "none"],
+      ["Hidden from rankings", res.counts.hidden ? `${res.counts.hidden} player(s) — scores still count; listed only in Tiebreak Detail` : "none"],
       ["Sheet", res.settings.sheet_url],
       ["Tab", res.settings.sheet_tab],
       ...(res.score_rules.length

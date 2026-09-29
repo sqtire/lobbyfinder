@@ -340,6 +340,16 @@ export default function PlacementsPanel() {
     return [...bySection.entries()];
   }, [preview]);
 
+  // players with forfeit losses in the loaded run — the usual "dropped out" candidates
+  const ffCandidates = useMemo(() => {
+    if (!result) return [] as { name: string; ff: number; hidden: boolean }[];
+    const hiddenKeys = new Set((result.hidden_placements ?? []).map((r) => r.player.key));
+    return [...result.placements, ...(result.hidden_placements ?? [])]
+      .filter((r) => r.forfeit_losses > 0)
+      .map((r) => ({ name: r.player.name, ff: r.forfeit_losses, hidden: hiddenKeys.has(r.player.key) }))
+      .sort((a, b) => b.ff - a.ff || a.name.localeCompare(b.name));
+  }, [result]);
+
   const hasSchedule = inputs.source === "upload" ? !!inputs.schedule_rows?.length : inputs.sheet_url.trim().length > 0;
   const canGenerate = isOwner && !busy && !live && hasSchedule && inputs.pool_text.trim().length > 0;
   const progressPct = job ? (job.status === "done" ? 100 : job.progress.total > 0 ? Math.round((job.progress.done / job.progress.total) * 100) : null) : null;
@@ -596,6 +606,58 @@ export default function PlacementsPanel() {
                   onChange={(e) => set("excluded_text", e.target.value)}
                 />
               </label>
+              <label className="plc-field plc-wide">
+                <span className="plc-label">
+                  Hidden from rankings — players who dropped out (names or osu! ids, one per line). They disappear from placements, leaderboards
+                  and best scores and everyone else&apos;s placement numbers close up; their scores still count toward map averages and the
+                  tiebreak, and they still show in Matches/Games as opponents.
+                </span>
+                <textarea
+                  className="input plc-pool"
+                  style={{ minHeight: 70 }}
+                  value={inputs.hidden_players}
+                  placeholder={"player one\n12345678"}
+                  spellCheck={false}
+                  onChange={(e) => set("hidden_players", e.target.value)}
+                />
+                {ffCandidates.length > 0 && (
+                  <span className="hint">
+                    Forfeit losses in the loaded run (click a name to hide it):{" "}
+                    {ffCandidates.map((c, i) => (
+                      <span key={c.name}>
+                        {i > 0 ? ", " : ""}
+                        {c.hidden ? (
+                          <span>
+                            {c.name} (FF×{c.ff}) ✓
+                          </span>
+                        ) : (
+                          <button
+                            className="linkbtn"
+                            onClick={() => {
+                              const cur = inputs.hidden_players.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+                              if (!cur.some((x) => x.toLowerCase() === c.name.toLowerCase())) set("hidden_players", [...cur, c.name].join("\n"));
+                            }}
+                          >
+                            {c.name} (FF×{c.ff})
+                          </button>
+                        )}
+                      </span>
+                    ))}{" "}
+                    {ffCandidates.some((c) => !c.hidden) && (
+                      <button
+                        className="btn-sm"
+                        onClick={() => {
+                          const cur = inputs.hidden_players.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+                          const add = ffCandidates.filter((c) => !c.hidden && !cur.some((x) => x.toLowerCase() === c.name.toLowerCase())).map((c) => c.name);
+                          set("hidden_players", [...cur, ...add].join("\n"));
+                        }}
+                      >
+                        Add all
+                      </button>
+                    )}
+                  </span>
+                )}
+              </label>
             </div>
             <div className="lock-row" style={{ marginTop: 12, gap: 18 }}>
               <label className="toggle" title="Lazer submits failed scores with passed=false; keep them in the ratings?">
@@ -713,8 +775,11 @@ function Results({ result, view, setView }: { result: PlacementsResult; view: Vi
     <div style={{ marginTop: 14 }}>
       <div className="stats" style={{ marginTop: 0, marginBottom: 12 }}>
         <div className="stat">
-          <div className="k">Players</div>
-          <div className="v">{fmtNum(result.counts.players)}</div>
+          <div className="k">Players ranked</div>
+          <div className="v">
+            {fmtNum(result.counts.players)}
+            {result.counts.hidden ? <span className="hint" style={{ fontSize: 12 }}> +{result.counts.hidden} hidden</span> : null}
+          </div>
         </div>
         <div className="stat">
           <div className="k">Matches</div>
@@ -1360,7 +1425,7 @@ function NotesView({ result }: { result: PlacementsResult }) {
         Settings
       </div>
       <p className="hint mono" style={{ margin: 0 }}>
-        tiebreak={s.value_mode} · prior_maps={s.prior_maps} · min_plays={s.min_plays} · weighting={s.map_weighting} · lower_multiplier={s.lower_multiplier}{" "}
+        hidden={result.counts.hidden ?? 0} · tiebreak={s.value_mode} · prior_maps={s.prior_maps} · min_plays={s.min_plays} · weighting={s.map_weighting} · lower_multiplier={s.lower_multiplier}{" "}
         (tiebreak only) · count_failed={String(s.count_failed)} ·
         forfeit_lobby_maps={String(s.forfeit_lobby_maps)} · stages={s.stages.length ? s.stages.join(", ") : "all"} · excluded=
         {s.excluded_items.length ? s.excluded_items.join(" ") : "none"} · tab=&ldquo;{s.sheet_tab}&rdquo; · generated {fmtDateTime(result.generated_at)}

@@ -397,6 +397,49 @@ ok(`${res.matches.length} matches audited, ${res.plays.length} plays, ${byMap.si
   ok(`score multipliers: ${scaled} plays scaled (${ez} with EZ); stats, leaderboards, mappool bests and map winners all use normalized scores`);
 }
 
+// ---- players hidden from rankings: gone from every ranking, numbers close up, calculations unchanged ----
+{
+  const byTop = [...res.placements].sort((a, b) => b.top_scores - a.top_scores);
+  const h1 = byTop[0]!; // a player holding #1 somewhere, so leaderboards must shift
+  const h2 = res.placements.find((p) => p.forfeit_losses > 0 && p !== h1) ?? res.placements[res.placements.length - 1]!;
+  const tokens = [h1.player.user_id ? String(h1.player.user_id) : h1.player.name, h2.player.name.toUpperCase(), "nobody-by-this-name"];
+  const rh = computePlacements({ settings: { ...settings, hidden_players: tokens.join("\n") }, schedule: schedule.rows, pool: pool.maps, rooms, roomErrors, beatmaps: new Map() });
+  const hid = new Set([h1.player.key, h2.player.key]);
+  if (rh.hidden_placements.length !== 2 || !rh.hidden_placements.every((r) => hid.has(r.player.key))) fail(`hidden: expected ${[...hid]} in hidden_placements`);
+  if (rh.placements.some((r) => hid.has(r.player.key))) fail("hidden player still in placements");
+  if (rh.placements.some((r, i) => r.rank !== i + 1)) fail("placements not renumbered 1..n");
+  if (rh.grid.players.some((p) => hid.has(p.key))) fail("hidden player still in the solo placements grid");
+  if (!rh.notes.some((n) => n.includes("nobody-by-this-name"))) fail("unmatched hidden name not reported");
+  if (rh.counts.players !== res.placements.length - 2 || rh.counts.hidden !== 2) fail(`counts: ${JSON.stringify(rh.counts)}`);
+  // order and tiebreak values of everyone else unchanged (their scores still count)
+  const before = res.placements.filter((r) => !hid.has(r.player.key));
+  if (before.map((r) => r.player.key).join() !== rh.placements.map((r) => r.player.key).join()) fail("relative order changed");
+  for (const r of rh.placements) {
+    const o = res.placements.find((x) => x.player.key === r.player.key)!;
+    if (o.performance !== r.performance || o.avg_score !== r.avg_score) fail(`${r.player.name}: calculation changed by hiding`);
+  }
+  for (const m of rh.maps) {
+    const o = res.maps.find((x) => x.key === m.key)!;
+    if (m.plays !== o.plays || m.mean !== o.mean || m.tiebreak.mean_adj !== o.tiebreak.mean_adj) fail(`${m.label}: averages changed by hiding`);
+    if (m.best && hid.has(m.best.player.key)) fail(`${m.label}: hidden player is best player`);
+    for (const b of m.beatmaps) if (b.best && hid.has(b.best.player.key)) fail(`${m.label}: hidden player is best on a difficulty`);
+    const lb = rh.leaderboards[m.key] ?? [];
+    if (lb.some((e) => hid.has(e.player.key))) fail(`${m.label}: hidden player on the leaderboard`);
+    for (const e of lb) if (e.rank !== 1 + lb.filter((x) => x.score > e.score).length) fail(`${m.label}: leaderboard not renumbered`);
+    const cells = rh.grid.players.map((p) => rh.grid.cells[p.key]?.[m.key] ?? null).filter((c): c is NonNullable<typeof c> => !!c);
+    for (const c of cells) if (c.placement !== 1 + cells.filter((x) => x.score > c.score).length) fail(`${m.label}: solo placement not renumbered`);
+  }
+  for (const r of rh.placements) {
+    const cells = rh.grid.players.length ? Object.values(rh.grid.cells[r.player.key] ?? {}).filter((c): c is NonNullable<typeof c> => !!c) : [];
+    if (r.top_scores !== cells.filter((c) => c.placement === 1).length) fail(`${r.player.name}: top scores not recomputed`);
+  }
+  const gained = rh.placements.reduce((a, r) => a + r.top_scores, 0) - before.reduce((a, r) => a + r.top_scores, 0);
+  if (h1.top_scores > 0 && gained <= 0) fail("nobody inherited the hidden player's #1s");
+  // still participants in matches
+  if (!rh.matches.some((m) => hid.has(m.red.key) || hid.has(m.blue.key))) fail("hidden players vanished from matches");
+  ok(`hidden players: 2 removed from every ranking (${gained} #1 spot(s) passed down), calculations and match records unchanged`);
+}
+
 if (process.env.DEBUG_MATCH) {
   const dm = res.matches.find((m) => m.match_id === process.env.DEBUG_MATCH);
   for (const g of dm?.games ?? []) console.log("  g", g.order, g.label, g.red?.score, g.blue?.score, g.raw_winner, g.status, g.reason ?? "", g.score_after ?? "");

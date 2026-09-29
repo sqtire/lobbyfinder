@@ -42,6 +42,11 @@ export interface PlacementsSettings {
   /** Playlist-item / game ids to ignore (typed after reviewing the Games tab). */
   excluded_items: number[];
   /**
+   * Players hidden from every ranking (dropped out / forfeited out): names or osu! ids, one per line or
+   * comma-separated. Their scores still count toward map averages and everyone else's tiebreak.
+   */
+  hidden_players: string;
+  /**
    * Multiplier applied to scores set on a lower-tier difficulty (2nd+ id on a pool line) INSIDE the
    * tiebreak only (AEROLS: 0.95). Every visible stat — leaderboards, mappool stats, grids — uses raw scores.
    */
@@ -64,6 +69,7 @@ export const DEFAULT_PLACEMENTS_SETTINGS: PlacementsSettings = {
   count_failed: true,
   forfeit_lobby_maps: true,
   excluded_items: [],
+  hidden_players: "",
   lower_multiplier: 0.95,
 };
 
@@ -370,10 +376,10 @@ export interface LeaderboardEntry {
 
 /** Best play of a player on a slot. Visible part is raw; the tiebreak part is what the ranking used. */
 export interface GridCell {
-  score: number; // best raw score
+  score: number; // best (normalized) score
   beatmap_id: number;
   tier: number;
-  placement: number; // rank among every player's best RAW score on the slot (ties share)
+  placement: number; // rank among ranked players' best scores on the slot (ties share; hidden players excluded)
   plays: number;
   tiebreak: {
     adjusted: number; // best adjusted score
@@ -388,7 +394,9 @@ export interface PlacementsResult {
   settings: Omit<PlacementsSettings, "pool_text" | "schedule_rows">;
   stages: string[];
   formula: string[];
-  placements: PlacementRow[];
+  placements: PlacementRow[]; // ranked players only (hidden players removed, ranks renumbered)
+  /** Players hidden from rankings (rank 0) — for the Tiebreak Detail tab only. */
+  hidden_placements: PlacementRow[];
   maps: MapStatRow[];
   leaderboards: Record<string, LeaderboardEntry[]>; // slot key -> plays sorted by raw score
   grid: { players: PlayerRef[]; cells: Record<string, Record<string, GridCell | null>> }; // player key -> slot key -> cell
@@ -399,7 +407,7 @@ export interface PlacementsResult {
   matches: MatchResult[];
   plays: PlayerPlay[];
   notes: string[];
-  counts: { matches: number; rooms: number; games_counted: number; games_excluded: number; players: number };
+  counts: { matches: number; rooms: number; games_counted: number; games_excluded: number; players: number; hidden: number };
 }
 
 // ---- job ---------------------------------------------------------------------

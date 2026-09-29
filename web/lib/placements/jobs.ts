@@ -57,6 +57,7 @@ export function sanitizeSettings(v: unknown): { ok: true; settings: PlacementsSe
       count_failed: o.count_failed === undefined ? true : !!o.count_failed,
       forfeit_lobby_maps: o.forfeit_lobby_maps === undefined ? true : !!o.forfeit_lobby_maps,
       excluded_items: [...new Set(excluded)].slice(0, 500),
+      hidden_players: str(o.hidden_players, 4000),
       lower_multiplier: num(o.lower_multiplier, DEFAULT_PLACEMENTS_SETTINGS.lower_multiplier, 0.5, 1.5),
     },
   };

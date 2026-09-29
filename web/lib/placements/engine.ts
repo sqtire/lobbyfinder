@@ -416,12 +416,36 @@ export function computePlacements(input: EngineInput): PlacementsResult {
       if (p.adjusted > cur.adj.adjusted) cur.adj = p;
     }
   }
-  const rawPlacement = new Map<string, Map<string, number>>(); // slot -> player -> placement among best raw scores
+  // -- players hidden from rankings (their scores still feed every calculation) --
+  const hidden = new Set<string>();
+  {
+    const unmatched: string[] = [];
+    for (const raw of (settings.hidden_players ?? "").split(/[\n,;]+/)) {
+      const t = raw.trim();
+      if (!t) continue;
+      const id = t.match(/osu\.ppy\.sh\/(?:users|u)\/(\d+)/i)?.[1] ?? (/^\d{2,10}$/.test(t) ? t : null);
+      let key: string | null = null;
+      if (id && players.has(`u:${id}`)) key = `u:${id}`;
+      if (!key) {
+        const n = normalizeName(t);
+        const viaSheet = nameToUser.get(n);
+        if (viaSheet !== undefined && players.has(`u:${viaSheet}`)) key = `u:${viaSheet}`;
+        else key = [...players.values()].find((p) => normalizeName(p.name) === n)?.key ?? (players.has(`n:${n}`) ? `n:${n}` : null);
+      }
+      if (key) hidden.add(key);
+      else unmatched.push(t);
+    }
+    if (unmatched.length) notes.push(`Hidden players not found in the schedule: ${unmatched.map((u) => `"${u}"`).join(", ")}.`);
+  }
+  const rawPlacement = new Map<string, Map<string, number>>(); // slot -> player -> placement among everyone's best score
+  const visPlacement = new Map<string, Map<string, number>>(); // same, among ranked (non-hidden) players only
   const adjPlacement = new Map<string, Map<string, number>>();
   for (const [slot, m] of bestBy) {
     const raws = [...m.values()].map((b) => b.raw.score);
+    const vis = [...m.entries()].filter(([pk]) => !hidden.has(pk)).map(([, b]) => b.raw.score);
     const adjs = [...m.values()].map((b) => b.adj.adjusted);
     rawPlacement.set(slot, new Map([...m.entries()].map(([pk, b]) => [pk, 1 + raws.filter((s) => s > b.raw.score).length])));
+    visPlacement.set(slot, new Map([...m.entries()].filter(([pk]) => !hidden.has(pk)).map(([pk, b]) => [pk, 1 + vis.filter((s) => s > b.raw.score).length])));
     adjPlacement.set(slot, new Map([...m.entries()].map(([pk, b]) => [pk, 1 + adjs.filter((s) => s > b.adj.adjusted).length])));
   }
 
@@ -539,7 +563,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     row.avg_acc = mean(ps.map((p) => p.accuracy));
     const best = ps.reduce<PlayerPlay | null>((b, p) => (!b || p.score > b.score ? p : b), null);
     row.best = best ? { beatmap_id: best.beatmap_id, label: best.label, score: best.score, match_id: best.match_id, room_id: best.room_id, room_kind: best.room_kind } : null;
-    const placements = mySlots.map((slot) => rawPlacement.get(slot)!.get(pk)!);
+    const placements = mySlots.map((slot) => (hidden.has(pk) ? rawPlacement : visPlacement).get(slot)!.get(pk)!);
     row.top_scores = placements.filter((x) => x === 1).length;
     row.avg_placement = mean(placements);
     const rated = ps.filter((p) => p.rated);
@@ -556,14 +580,19 @@ export function computePlacements(input: EngineInput): PlacementsResult {
       row.performance = (sum + k * neutral) / (values.length + k);
     }
   }
-  const placements = [...rowsByPlayer.values()].sort(
+  const sortedRows = [...rowsByPlayer.values()].sort(
     (a, b) =>
       b.points - a.points ||
       (b.performance ?? -Infinity) - (a.performance ?? -Infinity) ||
       (b.avg_value ?? -Infinity) - (a.avg_value ?? -Infinity) ||
       a.player.name.localeCompare(b.player.name, undefined, { sensitivity: "base" })
   );
+  const placements = sortedRows.filter((r) => !hidden.has(r.player.key));
+  const hiddenRows = sortedRows.filter((r) => hidden.has(r.player.key));
   placements.forEach((p, i) => (p.rank = i + 1));
+  hiddenRows.forEach((p) => (p.rank = 0));
+  if (hiddenRows.length) notes.push(`${hiddenRows.length} player(s) hidden from every ranking; their scores still count toward map averages and everyone else's tiebreak.`);
+  const isVisible = (p: PlayerPlay) => !hidden.has(p.player_key);
 
   // -- slot rows (raw), leaderboards (raw), grid (raw + tiebreak detail) --
   const playerByKey = new Map([...players.values()].map((p) => [p.key, p]));
@@ -588,7 +617,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     const ps = bySlot.get(key) ?? [];
     const st = slotStats.get(key);
     const upper = ms.find((m) => m.tier === 0) ?? ms[0]!;
-    const best = bestRaw(ps);
+    const best = bestRaw(ps.filter(isVisible));
     return {
       key,
       beatmap_id: upper.beatmap_id,
@@ -597,7 +626,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
       url: `https://osu.ppy.sh/b/${upper.beatmap_id}`,
       beatmaps: ms.map((m) => {
         const dps = ps.filter((p) => p.beatmap_id === m.beatmap_id);
-        const db = bestRaw(dps);
+        const db = bestRaw(dps.filter(isVisible));
         return {
           beatmap_id: m.beatmap_id,
           title: mapTitle(meta.get(m.beatmap_id), m.beatmap_id),
@@ -624,7 +653,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
   });
   const leaderboards: Record<string, LeaderboardEntry[]> = {};
   for (const m of maps) {
-    const ps = [...(bySlot.get(m.key) ?? [])].sort((a, b) => b.score - a.score || b.accuracy - a.accuracy);
+    const ps = [...(bySlot.get(m.key) ?? [])].filter(isVisible).sort((a, b) => b.score - a.score || b.accuracy - a.accuracy);
     const scores = ps.map((p) => p.score);
     leaderboards[m.key] = ps.map((p) => ({
       rank: 1 + scores.filter((s) => s > p.score).length,
@@ -645,17 +674,18 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     }));
   }
   const gridCells: Record<string, Record<string, GridCell | null>> = {};
-  for (const row of placements) gridCells[row.player.key] = {};
+  for (const row of sortedRows) gridCells[row.player.key] = {};
   for (const m of maps) {
     const bests = bestBy.get(m.key) ?? new Map<string, Best>();
-    for (const row of placements) {
+    for (const row of sortedRows) {
       const b = bests.get(row.player.key);
+      const plc = hidden.has(row.player.key) ? rawPlacement : visPlacement;
       gridCells[row.player.key]![m.key] = b
         ? {
             score: b.raw.score,
             beatmap_id: b.raw.beatmap_id,
             tier: b.raw.tier,
-            placement: rawPlacement.get(m.key)!.get(row.player.key)!,
+            placement: plc.get(m.key)!.get(row.player.key)!,
             plays: b.plays.length,
             tiebreak: {
               adjusted: b.adj.adjusted,
@@ -700,13 +730,14 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     stages,
     formula,
     placements,
+    hidden_placements: hiddenRows,
     maps,
     leaderboards,
     grid: { players: placements.map((p) => p.player), cells: gridCells },
     matches,
     plays,
     notes,
-    counts: { matches: matches.length, rooms: roomsUsed, games_counted: gamesCounted, games_excluded: gamesExcluded, players: players.size },
+    counts: { matches: matches.length, rooms: roomsUsed, games_counted: gamesCounted, games_excluded: gamesExcluded, players: placements.length, hidden: hiddenRows.length },
     tiebreak_label: tiebreakLabel,
     score_rules: scoreRules,
   };
