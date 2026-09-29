@@ -42,6 +42,12 @@ TB  999999 999998
 [Round 3]             ← optional: a section when a round uses a different pool
 NM1 …`;
 
+const MULT_PLACEHOLDER = `NM1 T1 1.176
+NM1 T2 1.333
+NM2 T2 1.25
+FM1 EZ 1.25
+TB  EZ 1.3`;
+
 const fmtScore = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : "—");
 const fmtAcc = (a: number | null | undefined) => (typeof a === "number" && Number.isFinite(a) ? `${(a * 100).toFixed(2)}%` : "—");
 const fmtVal = (v: number | null | undefined, d = 4) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "—");
@@ -249,6 +255,7 @@ export default function PlacementsPanel() {
         sheet_url: inputs.source === "link" ? inputs.sheet_url : "",
         sheet_tab: inputs.sheet_tab,
         pool_text: inputs.pool_text,
+        multipliers_text: inputs.multipliers_text,
         schedule_rows: rows,
       });
       if (!r.ok) {
@@ -440,6 +447,22 @@ export default function PlacementsPanel() {
                   onChange={(e) => set("pool_text", e.target.value)}
                 />
               </label>
+              <label className="plc-field plc-wide">
+                <span className="plc-label">
+                  Score multipliers — normalize scores before any stat (DA / EZ etc.). Paste the ref sheet&apos;s multiplier table (slot, tier or mod,
+                  multiplier — a stage column in front is fine) or type <span className="mono">NM1 T2 1.333</span>,{" "}
+                  <span className="mono">FM1 EZ 1.25</span>, <span className="mono">* EZ 1.75</span> for every slot. Slot rules beat{" "}
+                  <span className="mono">*</span> rules; a tier/slot rule and a mod rule multiply. Leave empty for raw scores.
+                </span>
+                <textarea
+                  className="input plc-pool"
+                  style={{ minHeight: 110 }}
+                  value={inputs.multipliers_text}
+                  placeholder={MULT_PLACEHOLDER}
+                  spellCheck={false}
+                  onChange={(e) => set("multipliers_text", e.target.value)}
+                />
+              </label>
             </div>
             <div className="lock-row" style={{ marginTop: 10 }}>
               <button className="btn ghost" disabled={previewBusy || !user || !hasSchedule} onClick={() => void readSheet()}>
@@ -490,7 +513,15 @@ export default function PlacementsPanel() {
                     The mappool is empty — paste the pool above (labels + beatmap ids or links).
                   </div>
                 )}
-                {[...preview.schedule.warnings, ...preview.pool.warnings].map((w, i) => (
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Score multipliers:{" "}
+                  {preview.multipliers.rules.length
+                    ? preview.multipliers.rules
+                        .map((r) => `${r.stage ? `${r.stage} ` : ""}${r.label ?? "*"}${r.tier !== null ? ` T${r.tier + 1}` : ""}${r.mods.length ? ` ${r.mods.join("")}` : ""} ×${r.factor}`)
+                        .join(" · ")
+                    : "none (raw scores)"}
+                </div>
+                {[...preview.schedule.warnings, ...preview.pool.warnings, ...preview.multipliers.warnings].map((w, i) => (
                   <div key={i} className="toast err" style={{ marginTop: 8 }}>
                     {w}
                   </div>
@@ -544,7 +575,7 @@ export default function PlacementsPanel() {
                   <option value="per_map">Average per unique map first</option>
                 </select>
               </label>
-              <label className="plc-field" title="Applied to scores set on a lower-tier difficulty (the 2nd+ id on a pool line) inside the tiebreak only. Leaderboards, mappool stats and grids always show raw scores. AEROLS: 0.95.">
+              <label className="plc-field" title="Applied to scores set on a lower-tier difficulty (the 2nd+ id on a pool line) inside the tiebreak only. Leaderboards, mappool stats and grids never use it (they use the score multipliers only). AEROLS: 0.95.">
                 <span className="plc-label">T2 multiplier (tiebreak only)</span>
                 <input
                   className="input"
@@ -762,10 +793,10 @@ function PlacementsTable({ result }: { result: PlacementsResult }) {
               <th title="Wins – losses (forfeits in brackets)">W–L</th>
               <th title={result.formula[1]}>{result.tiebreak_label} ▼</th>
               <th title="Plain average of the per-slot value, without the prior">Avg {vl}</th>
-              <th title="Slots where the player's best raw score is #1">Top</th>
-              <th title="Average raw placement over slots played">Avg #</th>
+              <th title="Slots where the player's best score is #1">Top</th>
+              <th title="Average placement over slots played">Avg #</th>
               <th title="Slots played / slots in the pool (counted plays in brackets)">Maps</th>
-              <th title="Map wins–losses–ties by raw score; shown only, never sorted on (cross-tier games are not comparable)">Map W–L–T</th>
+              <th title="Map wins–losses–ties by normalized score; shown only, never sorted on">Map W–L–T</th>
               <th title="Sum of opponents' points (shown only)">Buchholz</th>
               {result.stages.map((s) => (
                 <th key={s}>{s}</th>
@@ -833,8 +864,8 @@ function PerformanceTable({ result }: { result: PlacementsResult }) {
             <th title={result.formula[1]}>{result.tiebreak_label} ▼</th>
             <th title="Plain average of the per-slot value, without the prior">Avg {valueLabel(result)}</th>
             <th title="Slots played / slots in the pool">Maps played</th>
-            <th title="Slots where the player's best raw score is #1">Top scores</th>
-            <th title="Average raw placement over slots played">Avg placement</th>
+            <th title="Slots where the player's best score is #1">Top scores</th>
+            <th title="Average placement over slots played">Avg placement</th>
             <th>Avg score</th>
             <th>Avg acc</th>
             <th>Best score</th>
@@ -890,6 +921,7 @@ function MappoolTable({ result }: { result: PlacementsResult }) {
             <th>Tier</th>
             <th className="col-player">Artist - Title [Diff]</th>
             <th>★</th>
+            <th title="Score multipliers applied to this difficulty">Score ×</th>
             <th>Best player</th>
             <th>Score</th>
             <th>Acc</th>
@@ -913,6 +945,7 @@ function MappoolTable({ result }: { result: PlacementsResult }) {
                   </a>
                 </td>
                 <td className="mono">{b.difficulty_rating !== null ? b.difficulty_rating.toFixed(2) : "—"}</td>
+                <td className="mono hint">{b.score_multipliers || "—"}</td>
                 <td>{b.best ? <Player p={b.best.player} /> : <span className="hint">—</span>}</td>
                 <td className="mono">{b.best ? fmtScore(b.best.score) : "—"}</td>
                 <td className="mono">{b.best ? fmtAcc(b.best.accuracy) : "—"}</td>
@@ -935,7 +968,7 @@ function MappoolTable({ result }: { result: PlacementsResult }) {
           )}
           {result.maps.length === 0 && (
             <tr>
-              <td colSpan={13} className="hint">
+              <td colSpan={14} className="hint">
                 No pool maps.
               </td>
             </tr>
@@ -971,7 +1004,8 @@ function Leaderboards({ result }: { result: PlacementsResult }) {
               </a>
             </span>
           ))}
-          {" · "}avg score {fmtScore(map.mean)} · avg acc {fmtAcc(map.avg_acc)} · {map.plays} plays / {map.players} players · raw scores, both tiers together
+          {" · "}avg score {fmtScore(map.mean)} · avg acc {fmtAcc(map.avg_acc)} · {map.plays} plays / {map.players} players ·{" "}
+          {result.score_rules.length ? "normalized scores" : "raw scores"}, both tiers together
         </div>
       )}
       <div className="tgrid-wrap">
@@ -1003,7 +1037,10 @@ function Leaderboards({ result }: { result: PlacementsResult }) {
                   )}
                 </td>
                 {tiers > 1 && <td className="hint">{tierName(e.tier, tiers)}</td>}
-                <td className="mono">{fmtScore(e.score)}</td>
+                <td className="mono" title={e.score_multiplier !== 1 ? `raw ${fmtScore(e.raw_score)} × ${Number(e.score_multiplier.toFixed(4))}` : undefined}>
+                  {fmtScore(e.score)}
+                  {e.score_multiplier !== 1 && <span className="hint"> ×{Number(e.score_multiplier.toFixed(3))}</span>}
+                </td>
                 <td className="mono">{fmtAcc(e.accuracy)}</td>
                 <td className="mono">{e.max_combo ?? "—"}</td>
                 <td>
@@ -1041,7 +1078,7 @@ function ScoresGrid({ result }: { result: PlacementsResult }) {
       <div className="lock-row" style={{ marginBottom: 8 }}>
         <div className="tabs">
           <button className={`tab ${!detail ? "active" : ""}`} onClick={() => setDetail(false)}>
-            Scores (raw)
+            Scores
           </button>
           <button className={`tab ${detail ? "active" : ""}`} onClick={() => setDetail(true)}>
             Tiebreak detail
@@ -1049,8 +1086,8 @@ function ScoresGrid({ result }: { result: PlacementsResult }) {
         </div>
         <span className="hint">
           {detail
-            ? `What the tiebreak used per slot: adjusted best score (T2 × ${result.settings.lower_multiplier}), its placement, and the ${vl} value.`
-            : "Best raw score per slot and its placement among every player's best (ties share)."}
+            ? `What the tiebreak used per slot: best score × ${result.settings.lower_multiplier} on T2${result.score_rules.length ? " (after the score multipliers)" : ""}, its placement, and the ${vl} value.`
+            : `Best ${result.score_rules.length ? "normalized" : "raw"} score per slot and its placement among every player's best (ties share).`}
         </span>
       </div>
       <div className="tgrid-wrap">
@@ -1253,7 +1290,9 @@ function GamesTable({ result }: { result: PlacementsResult }) {
                   <td className="mono">
                     {g.red ? (
                       <>
-                        {fmtScore(g.red.score)} <span className="hint">{fmtAcc(g.red.accuracy)}</span>
+                        {fmtScore(g.red.score)}
+                        {g.red_norm !== null && Math.round(g.red_norm) !== g.red.score && <span className="hint"> → {fmtScore(g.red_norm)}</span>}{" "}
+                        <span className="hint">{fmtAcc(g.red.accuracy)}</span>
                         {g.red.beatmap_id !== g.beatmap_id && <span className="hint"> ·b{g.red.beatmap_id}</span>}
                         {!g.red.passed && <span className="badge open"> F</span>}
                       </>
@@ -1264,7 +1303,9 @@ function GamesTable({ result }: { result: PlacementsResult }) {
                   <td className="mono">
                     {g.blue ? (
                       <>
-                        {fmtScore(g.blue.score)} <span className="hint">{fmtAcc(g.blue.accuracy)}</span>
+                        {fmtScore(g.blue.score)}
+                        {g.blue_norm !== null && Math.round(g.blue_norm) !== g.blue.score && <span className="hint"> → {fmtScore(g.blue_norm)}</span>}{" "}
+                        <span className="hint">{fmtAcc(g.blue.accuracy)}</span>
                         {g.blue.beatmap_id !== g.beatmap_id && <span className="hint"> ·b{g.blue.beatmap_id}</span>}
                         {!g.blue.passed && <span className="badge open"> F</span>}
                       </>

@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
 import { bad, json, readJson } from "@/lib/api";
+import { parseMultipliers } from "@/lib/placements/multipliers";
 import { parsePool } from "@/lib/placements/pool";
 import { fetchScheduleTable, parseScheduleTable, sanitizeTable } from "@/lib/placements/schedule";
 import type { PreviewResponse } from "@/lib/placements/types";
@@ -15,7 +16,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return bad("sign in required", 401);
-  const body = (await readJson<{ sheet_url?: string; sheet_tab?: string; pool_text?: string; schedule_rows?: unknown }>(req)) ?? {};
+  const body = (await readJson<{ sheet_url?: string; sheet_tab?: string; pool_text?: string; multipliers_text?: string; schedule_rows?: unknown }>(req)) ?? {};
   const uploaded = sanitizeTable(body.schedule_rows);
   const url = typeof body.sheet_url === "string" ? body.sheet_url.trim() : "";
   if (!uploaded && !/docs\.google\.com\/spreadsheets\/d\//.test(url)) return bad("Paste the referee sheet's Google Sheets link, or upload the sheet as .xlsx.");
@@ -60,6 +61,7 @@ export async function POST(req: Request) {
       warnings: schedule.warnings,
     },
     pool,
+    multipliers: parseMultipliers(typeof body.multipliers_text === "string" ? body.multipliers_text : "", [...new Set(pool.maps.map((m) => m.label))]),
   };
   return json(out);
 }

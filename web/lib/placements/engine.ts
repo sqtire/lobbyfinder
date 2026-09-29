@@ -34,6 +34,7 @@
 
 import { normCdf } from "@/lib/stats";
 import { normalizeName } from "@/lib/rosterParse";
+import { describeMultipliers, parseMultipliers, scoreMultiplier } from "./multipliers";
 import { poolForStage } from "./pool";
 import type {
   BeatmapMeta,
@@ -90,6 +91,14 @@ export interface EngineInput {
 export function computePlacements(input: EngineInput): PlacementsResult {
   const { settings, pool, rooms, roomErrors } = input;
   const notes: string[] = [];
+  const multParse = parseMultipliers(settings.multipliers_text ?? "", [...new Set(pool.map((m) => m.label))]);
+  const scoreRules = multParse.rules;
+  notes.push(...multParse.warnings);
+  {
+    const known = new Set(input.schedule.map((r) => r.stage.trim().toLowerCase()));
+    for (const r of scoreRules)
+      if (r.stage && !known.has(r.stage.trim().toLowerCase())) notes.push(`Multipliers line ${r.line}: "${r.stage}" isn't a stage in the schedule, so that rule never applies.`);
+  }
 
   // -- stage filter (keep sheet order) --
   const wanted = settings.stages.length ? new Set(settings.stages.map((s) => s.trim().toLowerCase())) : null;
@@ -208,6 +217,15 @@ export function computePlacements(input: EngineInput): PlacementsResult {
         const bs = blue.user_id !== null ? gm.scores.find((s) => s.user_id === blue.user_id) ?? null : null;
         const candidates = [gm.beatmap_id, rs?.beatmap_id, bs?.beatmap_id].filter((x): x is number => typeof x === "number");
         const poolEntry = candidates.map((id) => stagePool.get(id)).find((x) => !!x) ?? null;
+        // normalized score: raw × the score multiplier for the difficulty the player actually played (+ their mods)
+        const norm = (s: RoomScore | null) => {
+          if (!s) return null;
+          const own = stagePool.get(s.beatmap_id) ?? poolEntry;
+          const f = own ? scoreMultiplier(scoreRules, r.stage, own.label, own.tier, s.mods) : 1;
+          return { own, f, score: s.score * f };
+        };
+        const rn = norm(rs);
+        const bn = norm(bs);
         const base: MatchGame = {
           room_id: ref.id,
           room_kind: ref.kind,
@@ -217,7 +235,9 @@ export function computePlacements(input: EngineInput): PlacementsResult {
           label: poolEntry?.label ?? null,
           red: rs,
           blue: bs,
-          raw_winner: rs && bs ? (rs.score > bs.score ? "red" : bs.score > rs.score ? "blue" : "tie") : null,
+          red_norm: rn ? rn.score : null,
+          blue_norm: bn ? bn.score : null,
+          raw_winner: rn && bn ? (rn.score > bn.score ? "red" : bn.score > rn.score ? "blue" : "tie") : null,
           status: "excluded",
           reason: null,
           score_after: null,
@@ -269,6 +289,8 @@ export function computePlacements(input: EngineInput): PlacementsResult {
         const mk = (me: PlayerRef, opp: PlayerRef, s: RoomScore, won: boolean | null): PlayerPlay => {
           const own = stagePool.get(s.beatmap_id) ?? poolEntry;
           const multiplier = own.tier > 0 ? settings.lower_multiplier : 1;
+          const f = scoreMultiplier(scoreRules, r.stage, own.label, own.tier, s.mods);
+          const normalized = s.score * f;
           return {
             player_key: me.key,
             beatmap_id: own.beatmap_id,
@@ -276,8 +298,10 @@ export function computePlacements(input: EngineInput): PlacementsResult {
             map_key: own.slot,
             tier: own.tier,
             multiplier,
-            adjusted: s.score * multiplier,
-            score: s.score,
+            adjusted: normalized * multiplier,
+            score: normalized,
+            raw_score: s.score,
+            score_multiplier: f,
             accuracy: s.accuracy,
             max_combo: s.max_combo,
             mods: s.mods,
@@ -546,6 +570,8 @@ export function computePlacements(input: EngineInput): PlacementsResult {
   const toBest = (p: PlayerPlay): BestScore => ({
     player: playerByKey.get(p.player_key)!,
     score: p.score,
+    raw_score: p.raw_score,
+    score_multiplier: p.score_multiplier,
     beatmap_id: p.beatmap_id,
     tier: p.tier,
     accuracy: p.accuracy,
@@ -578,6 +604,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
           url: `https://osu.ppy.sh/b/${m.beatmap_id}`,
           tier: m.tier,
           multiplier: m.tier > 0 ? lowerMult : 1,
+          score_multipliers: describeMultipliers(scoreRules, stages, m.label, m.tier),
           difficulty_rating: meta.get(m.beatmap_id)?.difficulty_rating ?? null,
           plays: dps.length,
           mean: mean(dps.map((p) => p.score)),
@@ -603,6 +630,8 @@ export function computePlacements(input: EngineInput): PlacementsResult {
       rank: 1 + scores.filter((s) => s > p.score).length,
       player: playerByKey.get(p.player_key)!,
       score: p.score,
+      raw_score: p.raw_score,
+      score_multiplier: p.score_multiplier,
       beatmap_id: p.beatmap_id,
       tier: p.tier,
       accuracy: p.accuracy,
@@ -646,11 +675,14 @@ export function computePlacements(input: EngineInput): PlacementsResult {
   const { pool_text: _omit, schedule_rows: _rows, ...settingsOut } = settings;
   void _omit;
   void _rows;
-  const pooled = hasTiers && lowerMult !== 1 ? `both tiers together, lower-tier scores × ${lowerMult} for this step only — every visible stat stays raw` : hasTiers ? "both tiers together, no multiplier" : "one difficulty per slot";
+  const pooled = hasTiers && lowerMult !== 1 ? `both tiers together, lower-tier scores × ${lowerMult} for this step only — no visible stat uses it` : hasTiers ? "both tiers together, no tier multiplier" : "one difficulty per slot";
   const tiebreakText =
     mode === "zipf"
       ? `Zipf placement average — on each slot every player's best score is ranked (${pooled}) and is worth 1/placement (#1 = 1, #2 = 0.5, #3 = 0.33…); a player's tiebreak is (Σ value + ${k}·${neutral.toFixed(3)}) / (slots played + ${k}), where ${neutral.toFixed(3)} is the field's average value and the ${k} phantom slots keep a 3-slot sample from beating a 20-slot one on luck.`
       : `${tiebreakLabel} — z = (score − slot mean) / slot stdev over every counted play of the slot (${pooled}), value = ${mode === "phi" ? "Φ(z)" : "z"}${settings.map_weighting === "per_map" ? " averaged per slot first" : " per play"}; tiebreak = (Σ value + ${k}·${neutral}) / (n + ${k}).`;
+  const normText = scoreRules.length
+    ? `Every score is first normalized with ${scoreRules.length} score-multiplier rule(s) (raw × multiplier for the difficulty and mods played); leaderboards, mappool stats, averages, map winners and the tiebreak all use normalized scores.`
+    : "No score multipliers set — raw scores are used everywhere.";
   const formula = [
     `Primary sort: points from the referee sheet (1 per win, forfeit wins included).`,
     `Tiebreak: ${tiebreakText}`,
@@ -658,6 +690,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     `Counted plays: completed pool maps where both scheduled players posted a score, in lobby order, up to the number of maps the sheet score implies; tiebreakers only as the deciding map of an (ft, ft−1) match${
       settings.count_failed ? "; failed scores count" : "; failed scores are dropped"
     }${settings.forfeit_lobby_maps ? "; maps played before a forfeit count" : "; forfeit lobbies are ignored"}.`,
+    normText,
   ];
 
   return {
@@ -675,5 +708,6 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     notes,
     counts: { matches: matches.length, rooms: roomsUsed, games_counted: gamesCounted, games_excluded: gamesExcluded, players: players.size },
     tiebreak_label: tiebreakLabel,
+    score_rules: scoreRules,
   };
 }

@@ -350,6 +350,53 @@ ok(`${res.matches.length} matches audited, ${res.plays.length} plays, ${byMap.si
   ok(`multiplier: ${lowerPlays} lower-tier plays ×${settings.lower_multiplier} inside the tiebreak only; ${moved} lower-tier player(s) moved down; leaderboards/mappool stats unchanged`);
 }
 
+// ---- score multipliers (normalization) apply to every stat ----
+{
+  const labels = [...new Set(pool.maps.map((m) => m.label))];
+  const tiered = labels.find((l) => pool.maps.filter((m) => m.label === l).length > 1)!;
+  const other = labels.find((l) => l !== tiered && !/^tb/i.test(l))!;
+  const text = `#\tmod\tmultiplier\n${tiered}\tT1\t1.2\n${tiered}\tT2\t1.5\n*\tEZ\t2\n${other}\tEZ\t1.25`;
+  // copy the lobbies and put EZ on every third score
+  const rooms2 = new Map([...rooms].map(([k, v]) => [k, structuredClone(v)] as const));
+  let n = 0;
+  for (const room of rooms2.values()) for (const g of room.games) for (const s of g.scores) if (n++ % 3 === 0) s.mods = [...s.mods, "EZ"];
+  const ms = { ...settings, multipliers_text: text };
+  const r2 = computePlacements({ settings: ms, schedule: schedule.rows, pool: pool.maps, rooms: rooms2, roomErrors, beatmaps: new Map() });
+  const expectF = (label: string, tier: number, mods: string[]) =>
+    (label === tiered ? (tier === 0 ? 1.2 : 1.5) : 1) * (mods.includes("EZ") ? (label === other ? 1.25 : 2) : 1);
+  let scaled = 0;
+  let ez = 0;
+  for (const p of r2.plays) {
+    const f = expectF(p.label, p.tier, p.mods);
+    if (Math.abs(p.score_multiplier - f) > 1e-9) fail(`${p.label} T${p.tier + 1} ${p.mods.join("")}: multiplier ${p.score_multiplier} ≠ ${f}`);
+    if (Math.abs(p.score - p.raw_score * f) > 1e-6) fail(`${p.label}: normalized ${p.score} ≠ ${p.raw_score} × ${f}`);
+    if (Math.abs(p.adjusted - p.score * p.multiplier) > 1e-6) fail(`${p.label}: tiebreak score not built on the normalized score`);
+    if (f !== 1) scaled++;
+    if (p.mods.includes("EZ")) ez++;
+  }
+  if (!scaled || !ez) fail("multiplier test exercised nothing");
+  for (const m of r2.maps) {
+    const lb = r2.leaderboards[m.key] ?? [];
+    for (let i = 1; i < lb.length; i++) if (lb[i]!.score > lb[i - 1]!.score) fail(`${m.label}: leaderboard not sorted by normalized score`);
+    for (const e of lb) if (Math.abs(e.score - e.raw_score * e.score_multiplier) > 1e-6) fail(`${m.label}: leaderboard score not normalized`);
+    for (const b of m.beatmaps) {
+      const best = lb.filter((e) => e.beatmap_id === b.beatmap_id).reduce((x, e) => Math.max(x, e.score), -1);
+      if (b.best && Math.abs(b.best.score - best) > 1e-6) fail(`${m.label}: mappool best isn't the best normalized score`);
+    }
+  }
+  const tieredDesc = r2.maps.find((m) => m.label === tiered)!.beatmaps.map((b) => b.score_multipliers);
+  if (!tieredDesc[0]!.includes("1.2") || !tieredDesc[1]!.includes("1.5")) fail(`Score × column for ${tiered}: ${tieredDesc.join(" | ")}`);
+  for (const m of r2.matches)
+    for (const g of m.games) {
+      if (!g.red || !g.blue || g.red_norm === null || g.blue_norm === null) continue;
+      const w = g.red_norm > g.blue_norm ? "red" : g.blue_norm > g.red_norm ? "blue" : "tie";
+      if (g.raw_winner !== w) fail(`match ${m.match_id}: map winner not decided on normalized scores`);
+    }
+  // with no rules, normalized == raw everywhere
+  for (const p of res.plays) if (p.score !== p.raw_score || p.score_multiplier !== 1) fail("no rules but a score was scaled");
+  ok(`score multipliers: ${scaled} plays scaled (${ez} with EZ); stats, leaderboards, mappool bests and map winners all use normalized scores`);
+}
+
 if (process.env.DEBUG_MATCH) {
   const dm = res.matches.find((m) => m.match_id === process.env.DEBUG_MATCH);
   for (const g of dm?.games ?? []) console.log("  g", g.order, g.label, g.red?.score, g.blue?.score, g.raw_winner, g.status, g.reason ?? "", g.score_after ?? "");

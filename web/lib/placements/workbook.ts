@@ -12,7 +12,8 @@ import type { PlacementsResult } from "./types";
  *   Tiebreak Detail        what the tiebreak actually used (adjusted scores, adjusted placements, values)
  *   Matches / Games / Summary  audit trail
  *
- * Everything visible is raw; the lower-tier multiplier lives only in Tiebreak Detail.
+ * Scores are normalized with the score multipliers everywhere (raw values stay in Games); the ×0.95
+ * lower-tier factor lives only in Tiebreak Detail.
  */
 
 const NUM = "#,##0";
@@ -136,8 +137,8 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
   // ---- Mappool Stats (one row per difficulty) ---------------------------------
   {
     const ws = wb.addWorksheet("Mappool Stats");
-    titleRow(ws, `${title} - MAPPOOL STATISTICS`, "One row per difficulty; raw scores.");
-    ws.addRow(["Map", "Tier", "Artist - Title [Diff]", "Map ID", "Stars", "Best player", "Score", "Acc", "Mods", "Match", "Lobby", "Plays", "Avg. score", "Median", "Avg. acc"]);
+    titleRow(ws, `${title} - MAPPOOL STATISTICS`, res.score_rules.length ? "One row per difficulty; scores normalized with the score multipliers (Score × column)." : "One row per difficulty.");
+    ws.addRow(["Map", "Tier", "Artist - Title [Diff]", "Map ID", "Stars", "Score ×", "Best player", "Score", "Acc", "Mods", "Match", "Lobby", "Plays", "Avg. score", "Median", "Avg. acc"]);
     const headNo = ws.rowCount;
     for (const m of res.maps) {
       for (const b of m.beatmaps) {
@@ -147,6 +148,7 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
           b.title,
           b.beatmap_id,
           num(b.difficulty_rating),
+          b.score_multipliers,
           b.best?.player.name ?? "",
           b.best?.score ?? "",
           b.best ? b.best.accuracy : "",
@@ -162,17 +164,18 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
     }
     headRow(ws, headNo);
     ws.views = [{ state: "frozen", ySplit: headNo, xSplit: 3 }];
-    widths(ws, [7, 5, 52, 10, 6, 20, 11, 8, 7, 8, 44, 6, 12, 12, 9]);
+    widths(ws, [7, 5, 52, 10, 6, 16, 20, 11, 8, 7, 8, 44, 6, 12, 12, 9]);
     fmt(ws, [5], DEC2);
-    fmt(ws, [7, 13, 14], NUM);
-    fmt(ws, [8, 15], PCT);
+    fmt(ws, [8, 14, 15], NUM);
+    fmt(ws, [9, 16], PCT);
   }
 
   // ---- Individual Leaderboards (side-by-side blocks per slot, raw) ------------
   {
     const ws = wb.addWorksheet("Individual Leaderboards");
-    const COLS = ["#", "Player", "Tier", "Score", "Accuracy", "Max. Combo", "Mods", "Match"];
-    const W = COLS.length + 1; // one spacer column between blocks
+    const withMult = res.score_rules.length > 0;
+    const COLS = withMult ? ["#", "Player", "Tier", "Score", "×", "Accuracy", "Max. Combo", "Mods", "Match"] : ["#", "Player", "Tier", "Score", "Accuracy", "Max. Combo", "Mods", "Match"];
+    const W = COLS.length + 1; // one spacer column between blocks (COLS depends on withMult)
     const maxRows = Math.max(0, ...res.maps.map((m) => (res.leaderboards[m.key] ?? []).length));
     const cellAt = (r: number, c: number) => ws.getRow(r).getCell(c);
     res.maps.forEach((m, bi) => {
@@ -201,16 +204,20 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
         cellAt(r, c0).value = e.rank;
         cellAt(r, c0 + 1).value = e.player.name;
         cellAt(r, c0 + 2).value = tierName(e.tier, tiers);
-        cellAt(r, c0 + 3).value = e.score;
+        cellAt(r, c0 + 3).value = Math.round(e.score);
         cellAt(r, c0 + 3).numFmt = NUM;
-        cellAt(r, c0 + 4).value = e.accuracy;
-        cellAt(r, c0 + 4).numFmt = PCT;
-        cellAt(r, c0 + 5).value = e.max_combo ?? "";
-        cellAt(r, c0 + 6).value = dispMods(e.mods) + (e.passed ? "" : " (F)");
-        cellAt(r, c0 + 7).value = { text: e.match_id ? `#${e.match_id}` : "lobby", hyperlink: roomUrl(e.room_kind, e.room_id) };
-        cellAt(r, c0 + 7).font = { color: { argb: "FF0563C1" }, underline: true };
+        const o = withMult ? 1 : 0;
+        if (withMult) {
+          cellAt(r, c0 + 4).value = e.score_multiplier === 1 ? "" : Number(e.score_multiplier.toFixed(4));
+        }
+        cellAt(r, c0 + 4 + o).value = e.accuracy;
+        cellAt(r, c0 + 4 + o).numFmt = PCT;
+        cellAt(r, c0 + 5 + o).value = e.max_combo ?? "";
+        cellAt(r, c0 + 6 + o).value = dispMods(e.mods) + (e.passed ? "" : " (F)");
+        cellAt(r, c0 + 7 + o).value = { text: e.match_id ? `#${e.match_id}` : "lobby", hyperlink: roomUrl(e.room_kind, e.room_id) };
+        cellAt(r, c0 + 7 + o).font = { color: { argb: "FF0563C1" }, underline: true };
       });
-      widths(ws, [4, 20, 5, 11, 10, 10, 7, 8, 2], c0);
+      widths(ws, withMult ? [4, 20, 5, 11, 6, 10, 10, 7, 8, 2] : [4, 20, 5, 11, 10, 10, 7, 8, 2], c0);
     });
     ws.getColumn(1).width = 2;
     ws.addRow([]); // ensure the sheet isn't empty when there are no maps
@@ -221,7 +228,7 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
   // ---- Solo Placements (placement + best raw score per slot) ------------------
   {
     const ws = wb.addWorksheet("Solo Placements");
-    titleRow(ws, `${title} - INDIVIDUAL SCORES`, "Best raw score per slot and its placement among every player's best (ties share).");
+    titleRow(ws, `${title} - INDIVIDUAL SCORES`, `Best ${res.score_rules.length ? "normalized" : "raw"} score per slot and its placement among every player's best (ties share).`);
     const head: unknown[] = ["#", "Player", "Points", `Tiebreak`, "Top scores", "Avg. placement"];
     res.maps.forEach((m) => head.push(`${m.label} #`, `${m.label} score`));
     ws.addRow(head);
@@ -230,7 +237,7 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
       const row: unknown[] = [p.rank, p.player.name, p.points, num(p.performance), p.top_scores, num(p.avg_placement)];
       for (const m of res.maps) {
         const c = res.grid.cells[p.player.key]?.[m.key] ?? null;
-        row.push(c ? c.placement : "", c ? c.score : "");
+        row.push(c ? c.placement : "", c ? Math.round(c.score) : "");
       }
       ws.addRow(row);
     }
@@ -305,7 +312,7 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
   // ---- Games (every lobby game, counted or not) ----------------------------------
   {
     const ws = wb.addWorksheet("Games");
-    ws.addRow(["Stage", "Match", "Red", "Blue", "#", "Lobby", "Item ID", "Slot", "Item beatmap", "Red score", "Red acc", "Red mods", "Red diff", "Blue score", "Blue acc", "Blue mods", "Blue diff", "Raw winner", "Raw score after", "Status", "Reason"]);
+    ws.addRow(["Stage", "Match", "Red", "Blue", "#", "Lobby", "Item ID", "Slot", "Item beatmap", "Red score (raw)", "Red normalized", "Red acc", "Red mods", "Red diff", "Blue score (raw)", "Blue normalized", "Blue acc", "Blue mods", "Blue diff", "Map winner", "Score after", "Status", "Reason"]);
     for (const m of res.matches) {
       for (const gm of m.games) {
         ws.addRow([
@@ -319,10 +326,12 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
           gm.label ?? "",
           gm.beatmap_id,
           gm.red?.score ?? "",
+          gm.red_norm !== null ? Math.round(gm.red_norm) : "",
           gm.red ? gm.red.accuracy : "",
           gm.red ? dispMods(gm.red.mods) : "",
           gm.red?.beatmap_id ?? "",
           gm.blue?.score ?? "",
+          gm.blue_norm !== null ? Math.round(gm.blue_norm) : "",
           gm.blue ? gm.blue.accuracy : "",
           gm.blue ? dispMods(gm.blue.mods) : "",
           gm.blue?.beatmap_id ?? "",
@@ -335,9 +344,9 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
     }
     headRow(ws, 1);
     ws.views = [{ state: "frozen", ySplit: 1 }];
-    widths(ws, [12, 8, 18, 18, 5, 44, 11, 7, 11, 11, 8, 8, 10, 11, 8, 8, 10, 9, 10, 9, 50]);
-    fmt(ws, [10, 14], NUM);
-    fmt(ws, [11, 15], PCT);
+    widths(ws, [12, 8, 18, 18, 5, 44, 11, 7, 11, 12, 12, 8, 8, 10, 12, 12, 8, 8, 10, 9, 10, 9, 50]);
+    fmt(ws, [10, 11, 15, 16], NUM);
+    fmt(ws, [12, 17], PCT);
   }
 
   // ---- Summary ------------------------------------------------------------------
@@ -361,11 +370,15 @@ export async function placementsWorkbook(res: PlacementsResult): Promise<Buffer>
       ["Min plays per slot", res.settings.min_plays],
       ["Weighting (Φ/z only)", res.settings.map_weighting === "per_map" ? "per slot" : "per play"],
       ["Lower-tier multiplier (tiebreak only)", res.settings.lower_multiplier],
+      ["Score multipliers", res.score_rules.length ? `${res.score_rules.length} rule(s) — listed below` : "none"],
       ["Count failed scores", res.settings.count_failed ? "yes" : "no"],
       ["Count maps before a forfeit", res.settings.forfeit_lobby_maps ? "yes" : "no"],
       ["Excluded items", res.settings.excluded_items.join(", ") || "none"],
       ["Sheet", res.settings.sheet_url],
       ["Tab", res.settings.sheet_tab],
+      ...(res.score_rules.length
+        ? [[], ["Score multipliers (normalization, applied to every stat)"], ["Stage", "Slot", "Tier", "Mods", "Multiplier"], ...res.score_rules.map((r) => [r.stage ?? "all", r.label ?? "all", r.tier === null ? "any" : `T${r.tier + 1}`, r.mods.join("") || "—", r.factor])]
+        : []),
       [],
       ["Notes"],
       ...res.notes.map((n) => [n]),

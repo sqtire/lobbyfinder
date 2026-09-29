@@ -23,6 +23,8 @@ export interface PlacementsSettings {
   schedule_file: string | null;
   /** Manual mappool input — see lib/placements/pool.ts for the format. */
   pool_text: string;
+  /** Score multipliers (normalization, e.g. DA/EZ) — see lib/placements/multipliers.ts. Applied to every stat. */
+  multipliers_text: string;
   /** Stage names (as written in the sheet) to include; empty = every stage with a played match. */
   stages: string[];
   /** k in ZAdj = (Σ value + k·neutral) / (n + k). 0 = plain average. */
@@ -53,6 +55,7 @@ export const DEFAULT_PLACEMENTS_SETTINGS: PlacementsSettings = {
   schedule_rows: null,
   schedule_file: null,
   pool_text: "",
+  multipliers_text: "",
   stages: [],
   prior_maps: 2,
   min_plays: 3,
@@ -99,6 +102,18 @@ export interface ScheduleParse {
   header_row: number;
   columns: Record<string, number>;
   warnings: string[];
+}
+
+// ---- score multipliers (manual input) ---------------------------------------
+
+export interface MultRule {
+  stage: string | null; // null = every stage
+  label: string | null; // null = every slot ("*")
+  tier: number | null; // 0 = T1, 1 = T2; null = any difficulty
+  mods: string[]; // required mods (sorted), e.g. ["EZ"]
+  factor: number;
+  line: number;
+  text: string;
 }
 
 // ---- pool (manual input) ----------------------------------------------------
@@ -185,9 +200,11 @@ export interface MatchGame {
   order: number; // 1-based across the match
   beatmap_id: number; // item (host-selected)
   label: string | null; // pool slot label, if in pool
-  red: RoomScore | null;
+  red: RoomScore | null; // raw, as the lobby recorded it
   blue: RoomScore | null;
-  raw_winner: "red" | "blue" | "tie" | null;
+  red_norm: number | null; // score × score multiplier
+  blue_norm: number | null;
+  raw_winner: "red" | "blue" | "tie" | null; // by normalized score
   status: GameStatus;
   reason: string | null;
   score_after: [number, number] | null; // running lobby score after this game (raw comparison)
@@ -221,7 +238,10 @@ export interface PlayerPlay {
   multiplier: number;
   /** score × multiplier — used by the tiebreak only. */
   adjusted: number;
+  /** Normalized score (raw × score multiplier) — what every stat uses. */
   score: number;
+  raw_score: number;
+  score_multiplier: number;
   accuracy: number;
   max_combo: number | null;
   mods: string[];
@@ -240,7 +260,9 @@ export interface PlayerPlay {
 
 export interface BestScore {
   player: PlayerRef;
-  score: number; // raw
+  score: number; // normalized
+  raw_score: number;
+  score_multiplier: number;
   beatmap_id: number;
   tier: number;
   accuracy: number;
@@ -260,6 +282,8 @@ export interface MapDifficulty {
   url: string;
   tier: number; // 0 = upper (T1), 1+ = lower
   multiplier: number; // what the tiebreak applies to this difficulty's scores
+  /** Score multipliers that apply to this difficulty, e.g. "×1.176 · EZ ×1.25" ("" = none). */
+  score_multipliers: string;
   difficulty_rating: number | null;
   plays: number;
   mean: number | null; // raw
@@ -327,9 +351,11 @@ export interface PlacementRow {
 }
 
 export interface LeaderboardEntry {
-  rank: number; // by RAW score (ties share)
+  rank: number; // by normalized score (ties share)
   player: PlayerRef;
-  score: number;
+  score: number; // normalized
+  raw_score: number;
+  score_multiplier: number;
   beatmap_id: number;
   tier: number;
   accuracy: number;
@@ -368,6 +394,8 @@ export interface PlacementsResult {
   grid: { players: PlayerRef[]; cells: Record<string, Record<string, GridCell | null>> }; // player key -> slot key -> cell
   /** Human-readable name of the tiebreak in use ("Zipf placement average", …). */
   tiebreak_label: string;
+  /** Parsed score-multiplier rules in effect. */
+  score_rules: MultRule[];
   matches: MatchResult[];
   plays: PlayerPlay[];
   notes: string[];
@@ -421,4 +449,5 @@ export interface PreviewResponse {
     warnings: string[];
   };
   pool: { maps: PoolMap[]; warnings: string[] };
+  multipliers: { rules: MultRule[]; warnings: string[] };
 }

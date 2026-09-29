@@ -48,6 +48,7 @@ export function sanitizeSettings(v: unknown): { ok: true; settings: PlacementsSe
       schedule_rows,
       schedule_file: schedule_rows ? str(o.schedule_file, 200).trim() || "upload.xlsx" : null,
       pool_text,
+      multipliers_text: str(o.multipliers_text, 20000),
       stages,
       prior_maps: num(o.prior_maps, DEFAULT_PLACEMENTS_SETTINGS.prior_maps, 0, 50),
       min_plays: Math.round(num(o.min_plays, DEFAULT_PLACEMENTS_SETTINGS.min_plays, 2, 100)),
