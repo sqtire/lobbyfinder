@@ -1241,3 +1241,70 @@ table.stable td.cell {
   margin-right: 12px;
   white-space: nowrap;
 }
+
+/* ---- final placements ---- */
+.plc-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 14px;
+}
+.plc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.plc-wide {
+  grid-column: 1 / -1;
+}
+.plc-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-2);
+}
+textarea.plc-pool {
+  min-height: 170px;
+  resize: vertical;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+.plc-preview {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-2);
+}
+.plc-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plc-stage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.plc-stage.on {
+  background: var(--panel-2);
+}
+.plc-stage-name {
+  font-weight: 600;
+  min-width: 90px;
+}
+.gauge-track.plc-indeterminate .gauge-fill {
+  animation: plc-slide 1.4s ease-in-out infinite;
+}
+@keyframes plc-slide {
+  0% {
+    left: -30%;
+  }
+  100% {
+    left: 100%;
+  }
+}

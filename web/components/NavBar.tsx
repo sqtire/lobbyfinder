@@ -104,6 +104,9 @@ export default function NavBar() {
                 <a className="menu-item" role="menuitem" href="/">
                   <span className="menu-ico">⌂</span> Home
                 </a>
+                <a className="menu-item" role="menuitem" href="/placements">
+                  <span className="menu-ico">▤</span> Final placements
+                </a>
                 {user.is_site_owner && (
                   <a className="menu-item" role="menuitem" href="/owner">
                     <span className="menu-ico">⚙</span> Owner panel

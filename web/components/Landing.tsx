@@ -105,7 +105,7 @@ export default function Landing() {
 
       <div className="footer">
         One osu! API budget shared by every tournament: the sweep indexes every lobby once; tournaments backfill from that index, so
-        adding tournaments costs nothing extra.
+        adding tournaments costs nothing extra. Running a 1v1 bracket from a referee sheet? See <a href="/placements">Final placements</a>.
       </div>
     </main>
   );

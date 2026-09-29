@@ -62,6 +62,11 @@ function client(): Redis {
   }
   return g.__mpfRedis;
 }
+/** The shared connection, for feature modules that keep their own key namespace (lib/placements/store.ts). */
+export function redisClient(): Redis {
+  return client();
+}
+export const KEY_PREFIX = PREFIX;
 
 async function getJson<T>(key: string): Promise<T | null> {
   const raw = await client().get(key);
