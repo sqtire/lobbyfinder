@@ -18,18 +18,20 @@
 
 import http from "node:http";
 import fs from "node:fs";
-import { parseSchedule } from "../lib/placements/schedule";
+import { parseSchedule, parseScheduleTable } from "../lib/placements/schedule";
 import { parsePool } from "../lib/placements/pool";
 import { normalizeName } from "../lib/rosterParse";
 
 const csvPath = process.argv[2];
 const port = Number(process.argv[3] ?? 3222);
+const xlsxPath = process.argv[4]; // optional: served at /spreadsheets/d/<id>/export (the real referee sheet)
 if (!csvPath) {
-  console.error("usage: placements-mock-api.ts <schedule.csv> [port]");
+  console.error("usage: placements-mock-api.ts <schedule.csv | table.json> [port] [sheet.xlsx]");
   process.exit(2);
 }
 const csv = fs.readFileSync(csvPath, "utf8");
-const schedule = parseSchedule(csv);
+const schedule = csvPath.endsWith(".json") ? parseScheduleTable(JSON.parse(csv) as string[][]) : parseSchedule(csv);
+const xlsx = xlsxPath ? fs.readFileSync(xlsxPath) : null;
 
 // A synthetic pool: 6 slots × 2 tiers + TB (2 tiers). Exposed on /pool.txt.
 export const POOL_TEXT = [
@@ -48,7 +50,8 @@ const ALL_MAP_IDS = [...pool.maps.map((m) => m.beatmap_id), WARMUP_ID];
 
 // players: sheet name -> synthetic user id
 const userIds = new Map<string, number>();
-function uid(name: string): number {
+function uid(name: string, sheetId: number | null = null): number {
+  if (sheetId) return sheetId;
   const k = normalizeName(name);
   let id = userIds.get(k);
   if (!id) userIds.set(k, (id = 7000000 + userIds.size + 1));
@@ -92,8 +95,8 @@ let itemSeq = 800000;
 let evSeq = 9000000;
 
 function buildRoom(roomId: number, row: (typeof schedule.rows)[number], roomIdx: number) {
-  const red = uid(row.red);
-  const blue = uid(row.blue);
+  const red = uid(row.red, row.red_id);
+  const blue = uid(row.blue, row.blue_id);
   const items: Item[] = [];
   const events: any[] = [];
   const pushGame = (beatmap: number, scores: any[], opts: { aborted?: boolean } = {}) => {
@@ -211,6 +214,11 @@ const server = http.createServer((req, res) => {
   };
   if (url.pathname === "/pool.txt") return send(200, POOL_TEXT, "text/plain");
   if (url.pathname === "/stats") return send(200, { requests, rooms: rooms.size });
+  if (url.pathname.startsWith("/spreadsheets/d/") && url.pathname.endsWith("/export") && url.searchParams.get("format") === "xlsx") {
+    if (!xlsx) return send(404, "no xlsx configured", "text/plain");
+    res.writeHead(200, { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    return res.end(xlsx);
+  }
   if (url.pathname.startsWith("/spreadsheets/d/")) {
     if (url.pathname.endsWith("/gviz/tq")) {
       if (url.searchParams.get("sheet") !== "Chrono Schedule") return send(200, "", "text/csv"); // wrong tab -> empty

@@ -11,7 +11,7 @@
 import fs from "fs";
 import { computePlacements, roomKey } from "../lib/placements/engine";
 import { parsePool } from "../lib/placements/pool";
-import { parseSchedule } from "../lib/placements/schedule";
+import { parseSchedule, parseScheduleTable } from "../lib/placements/schedule";
 import { placementsWorkbook } from "../lib/placements/workbook";
 import { DEFAULT_PLACEMENTS_SETTINGS, type PlacementsSettings, type RoomData, type RoomGame, type RoomScore, type ScheduleRow } from "../lib/placements/types";
 
@@ -42,7 +42,7 @@ const csv = csvPath
       ",10,10,Round 3,Winner,2026-09-18,16:00,ref,,Bravo,5,0,Delta,,,,,mp link,https://osu.ppy.sh/multiplayer/rooms/3002,,,,,,5",
     ].join("\n");
 
-const schedule = parseSchedule(csv);
+const schedule = csvPath?.endsWith(".json") ? parseScheduleTable(JSON.parse(csv) as string[][]) : parseSchedule(csv);
 console.log(`schedule: ${schedule.rows.length} rows, header row ${schedule.header_row}, warnings: ${schedule.warnings.join("; ") || "none"}`);
 const stages = [...new Set(schedule.rows.map((r) => r.stage))];
 console.log("stages:", stages.join(", "));
@@ -68,7 +68,8 @@ const tb = pool.maps.find((m) => m.is_tb)!;
 // ---- synthetic lobbies ----------------------------------------------------------
 
 const userIds = new Map<string, number>();
-const uidOf = (name: string) => {
+const uidOf = (name: string, sheetId: number | null = null) => {
+  if (sheetId) return sheetId;
   let id = userIds.get(name.toLowerCase());
   if (!id) userIds.set(name.toLowerCase(), (id = 50000 + userIds.size));
   return id;
@@ -110,8 +111,8 @@ const scenario = new Map<string, string>();
 let roomsBuilt = 0;
 for (const row of schedule.rows) {
   if (!row.rooms.length) continue;
-  const red = uidOf(row.red);
-  const blue = uidOf(row.blue);
+  const red = uidOf(row.red, row.red_id);
+  const blue = uidOf(row.blue, row.blue_id);
   const rs = row.red_score ?? 0;
   const bs = row.blue_score ?? 0;
   const ft = row.first_to ?? Math.max(rs, bs);

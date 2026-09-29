@@ -14,11 +14,11 @@ export function parseSheetUrl(input: string): { id: string; gid: string | null }
   return { id: m[1]!, gid: gid ? gid[1]! : null };
 }
 
-export async function fetchSheetXlsx(sheetUrl: string): Promise<Buffer> {
+export async function fetchSheetXlsx(sheetUrl: string, base = "https://docs.google.com"): Promise<Buffer> {
   const parsed = parseSheetUrl(sheetUrl);
   if (!parsed) throw new Error("That doesn't look like a Google Sheets URL.");
   const exportUrl =
-    `https://docs.google.com/spreadsheets/d/${parsed.id}/export?format=xlsx` +
+    `${base}/spreadsheets/d/${parsed.id}/export?format=xlsx` +
     (parsed.gid ? `&gid=${parsed.gid}` : "");
 
   let res: Response;

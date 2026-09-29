@@ -109,6 +109,11 @@ export function computePlacements(input: EngineInput): PlacementsResult {
   const userName = new Map<number, string>();
   for (const room of rooms.values()) for (const u of Object.values(room.users)) userName.set(u.id, u.username);
   const activityNotes: string[] = [];
+  // profile links on the sheet's name cells are exact ids — take them first
+  for (const r of rows) {
+    if (r.red_id) nameToUser.set(normalizeName(r.red), r.red_id);
+    if (r.blue_id) nameToUser.set(normalizeName(r.blue), r.blue_id);
+  }
   for (const r of rows) {
     const rowRooms = r.rooms.map((ref) => rooms.get(roomKey(ref))).filter((x): x is RoomData => !!x);
     if (!rowRooms.length) continue;
@@ -121,7 +126,7 @@ export function computePlacements(input: EngineInput): PlacementsResult {
     const byName = new Map<string, number>();
     for (const [id, name] of users) byName.set(normalizeName(name), id);
     const names = [r.red, r.blue];
-    const resolved: (number | null)[] = names.map((n) => nameToUser.get(normalizeName(n)) ?? byName.get(normalizeName(n)) ?? null);
+    const resolved: (number | null)[] = [r.red_id, r.blue_id].map((id, i) => id ?? nameToUser.get(normalizeName(names[i]!)) ?? byName.get(normalizeName(names[i]!)) ?? null);
     names.forEach((name, i) => {
       if (resolved[i] !== null) nameToUser.set(normalizeName(name), resolved[i]!);
     });
@@ -638,8 +643,9 @@ export function computePlacements(input: EngineInput): PlacementsResult {
   const discrepancies = matches.filter((m) => m.notes.some((n) => n.startsWith("Sheet says")));
   if (discrepancies.length) notes.push(`${discrepancies.length} match(es) have fewer countable lobby maps than the sheet score implies — see the Matches tab.`);
 
-  const { pool_text: _omit, ...settingsOut } = settings;
+  const { pool_text: _omit, schedule_rows: _rows, ...settingsOut } = settings;
   void _omit;
+  void _rows;
   const pooled = hasTiers && lowerMult !== 1 ? `both tiers together, lower-tier scores × ${lowerMult} for this step only — every visible stat stays raw` : hasTiers ? "both tiers together, no multiplier" : "one difficulty per slot";
   const tiebreakText =
     mode === "zipf"

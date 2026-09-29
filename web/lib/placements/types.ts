@@ -17,6 +17,10 @@ export interface PlacementsSettings {
   sheet_url: string;
   /** Tab that holds the chronological schedule (mp links, stage, first-to). */
   sheet_tab: string;
+  /** Uploaded instead of linked: the schedule tab as a string table (read server-side from the .xlsx). */
+  schedule_rows: string[][] | null;
+  /** File name of the upload, for display. */
+  schedule_file: string | null;
   /** Manual mappool input — see lib/placements/pool.ts for the format. */
   pool_text: string;
   /** Stage names (as written in the sheet) to include; empty = every stage with a played match. */
@@ -46,6 +50,8 @@ export const DEFAULT_PLACEMENTS_SETTINGS: PlacementsSettings = {
   title: "",
   sheet_url: "",
   sheet_tab: "Chrono Schedule",
+  schedule_rows: null,
+  schedule_file: null,
   pool_text: "",
   stages: [],
   prior_maps: 2,
@@ -77,6 +83,9 @@ export interface ScheduleRow {
   date: string | null;
   red: string;
   blue: string;
+  /** osu! user ids from profile links on the name cells, when the sheet has them — preferred over name matching. */
+  red_id: number | null;
+  blue_id: number | null;
   red_score: number | null; // -1 = forfeit
   blue_score: number | null;
   first_to: number | null;
@@ -350,7 +359,7 @@ export interface GridCell {
 export interface PlacementsResult {
   generated_at: string;
   title: string;
-  settings: Omit<PlacementsSettings, "pool_text">;
+  settings: Omit<PlacementsSettings, "pool_text" | "schedule_rows">;
   stages: string[];
   formula: string[];
   placements: PlacementRow[];

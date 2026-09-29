@@ -11,7 +11,7 @@ import crypto from "crypto";
 import { computePlacements, roomKey } from "./engine";
 import { loadBeatmaps, loadRoom } from "./osu";
 import { parsePool } from "./pool";
-import { fetchSheetTabCsv, parseSchedule } from "./schedule";
+import { fetchScheduleTable, parseScheduleTable, sanitizeTable } from "./schedule";
 import { activeJobId, claimActive, getJob, registerJob, releaseActive, saveJob, saveResult, touchActive } from "./store";
 import type { BeatmapMeta, JobProgress, PlacementsJob, PlacementsSettings, RoomData } from "./types";
 import { DEFAULT_PLACEMENTS_SETTINGS } from "./types";
@@ -24,7 +24,8 @@ export function sanitizeSettings(v: unknown): { ok: true; settings: PlacementsSe
   const o = (v ?? {}) as Partial<Record<keyof PlacementsSettings, unknown>>;
   const str = (x: unknown, max = 4000) => (typeof x === "string" ? x.slice(0, max) : "");
   const sheet_url = str(o.sheet_url, 500).trim();
-  if (!/docs\.google\.com\/spreadsheets\/d\//.test(sheet_url)) return { ok: false, error: "Paste the referee sheet's Google Sheets link." };
+  const schedule_rows = sanitizeTable(o.schedule_rows);
+  if (!schedule_rows && !/docs\.google\.com\/spreadsheets\/d\//.test(sheet_url)) return { ok: false, error: "Paste the referee sheet's Google Sheets link, or upload the sheet as .xlsx." };
   const pool_text = str(o.pool_text, 20000);
   if (!pool_text.trim()) return { ok: false, error: "The mappool is empty." };
   const num = (x: unknown, fallback: number, min: number, max: number) => {
@@ -42,8 +43,10 @@ export function sanitizeSettings(v: unknown): { ok: true; settings: PlacementsSe
     ok: true,
     settings: {
       title: str(o.title, 120).trim(),
-      sheet_url,
+      sheet_url: schedule_rows ? "" : sheet_url,
       sheet_tab: str(o.sheet_tab, 120).trim() || DEFAULT_PLACEMENTS_SETTINGS.sheet_tab,
+      schedule_rows,
+      schedule_file: schedule_rows ? str(o.schedule_file, 200).trim() || "upload.xlsx" : null,
       pool_text,
       stages,
       prior_maps: num(o.prior_maps, DEFAULT_PLACEMENTS_SETTINGS.prior_maps, 0, 50),
@@ -117,8 +120,8 @@ async function run(job: PlacementsJob): Promise<void> {
     job.started_at = new Date().toISOString();
     await setProgress({ phase: "sheet", done: 0, total: 0, message: `Reading “${s.sheet_tab}”…` });
 
-    const csv = await fetchSheetTabCsv(s.sheet_url, s.sheet_tab);
-    const schedule = parseSchedule(csv);
+    const table = s.schedule_rows ?? (await fetchScheduleTable(s.sheet_url, s.sheet_tab));
+    const schedule = parseScheduleTable(table);
     const poolParse = parsePool(s.pool_text);
     if (poolParse.maps.length === 0) throw new Error("The mappool has no maps.");
 

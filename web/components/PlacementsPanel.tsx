@@ -28,9 +28,11 @@ type View = "placements" | "performance" | "mappool" | "leaderboards" | "grid" |
 /** What the panel persists between visits (settings + the excluded-ids text as typed). */
 interface Inputs extends Omit<PlacementsSettings, "excluded_items"> {
   excluded_text: string;
+  /** Where the schedule comes from: the sheet link, or an uploaded .xlsx (schedule_rows). */
+  source: "link" | "upload";
 }
 
-const DEFAULT_INPUTS: Inputs = { ...DEFAULT_PLACEMENTS_SETTINGS, excluded_text: "" };
+const DEFAULT_INPUTS: Inputs = { ...DEFAULT_PLACEMENTS_SETTINGS, excluded_text: "", source: "link" };
 
 const POOL_PLACEHOLDER = `NM1 4567890 5678901   ← upper (Tier 1) difficulty first, then the lower (Tier 2) one
 NM2 https://osu.ppy.sh/beatmapsets/123456#osu/654321
@@ -209,13 +211,45 @@ export default function PlacementsPanel() {
     return () => clearInterval(t);
   }, [live, job, openJob, refreshJobs, flash]);
 
-  async function readSheet() {
+  async function uploadFile(file: File) {
     setPreviewBusy(true);
     try {
+      const res = await fetch(`/api/placements/upload?tab=${encodeURIComponent(inputs.sheet_tab || "Chrono Schedule")}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: file,
+      });
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        /* no body */
+      }
+      if (!res.ok || !Array.isArray(data?.rows)) {
+        flash("err", data?.error ?? (res.status === 401 ? "Sign in first." : res.status === 413 ? "That file is too large." : "Couldn't read that file."));
+        return;
+      }
+      const rows = data.rows as string[][];
+      setInputs((s) => ({ ...s, source: "upload", schedule_rows: rows, schedule_file: file.name, sheet_tab: typeof data.tab === "string" ? data.tab : s.sheet_tab }));
+      await readSheet(rows);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function readSheet(uploadedRows?: string[][]) {
+    setPreviewBusy(true);
+    try {
+      const rows = uploadedRows ?? (inputs.source === "upload" ? inputs.schedule_rows : null);
+      if (inputs.source === "upload" && !rows) {
+        flash("err", "Choose the .xlsx file first.");
+        return;
+      }
       const r = await api("/api/placements/preview", "POST", {
-        sheet_url: inputs.sheet_url,
+        sheet_url: inputs.source === "link" ? inputs.sheet_url : "",
         sheet_tab: inputs.sheet_tab,
         pool_text: inputs.pool_text,
+        schedule_rows: rows,
       });
       if (!r.ok) {
         setPreview(null);
@@ -240,8 +274,14 @@ export default function PlacementsPanel() {
   async function generate() {
     setBusy(true);
     try {
-      const { excluded_text, ...rest } = inputs;
-      const body: PlacementsSettings = { ...rest, excluded_items: parseIds(excluded_text) };
+      const { excluded_text, source, ...rest } = inputs;
+      const body: PlacementsSettings = {
+        ...rest,
+        sheet_url: source === "link" ? rest.sheet_url : "",
+        schedule_rows: source === "upload" ? rest.schedule_rows : null,
+        schedule_file: source === "upload" ? rest.schedule_file : null,
+        excluded_items: parseIds(excluded_text),
+      };
       const r = await api("/api/placements/jobs", "POST", body);
       if (!r.ok) {
         const msg: string = r.data?.error ?? "Couldn't start the run.";
@@ -272,7 +312,7 @@ export default function PlacementsPanel() {
   }
 
   function reuse(settings: PlacementsSettings) {
-    setInputs({ ...settings, excluded_text: settings.excluded_items.join(" ") });
+    setInputs({ ...DEFAULT_INPUTS, ...settings, excluded_text: settings.excluded_items.join(" "), source: settings.schedule_rows ? "upload" : "link" });
     setPreview(null);
     setSetupOpen(true);
     flash("ok", "Inputs loaded from that run — read the sheet again to check the stages.");
@@ -293,7 +333,8 @@ export default function PlacementsPanel() {
     return [...bySection.entries()];
   }, [preview]);
 
-  const canGenerate = isOwner && !busy && !live && inputs.sheet_url.trim().length > 0 && inputs.pool_text.trim().length > 0;
+  const hasSchedule = inputs.source === "upload" ? !!inputs.schedule_rows?.length : inputs.sheet_url.trim().length > 0;
+  const canGenerate = isOwner && !busy && !live && hasSchedule && inputs.pool_text.trim().length > 0;
   const progressPct = job ? (job.status === "done" ? 100 : job.progress.total > 0 ? Math.round((job.progress.done / job.progress.total) * 100) : null) : null;
 
   return (
@@ -337,19 +378,54 @@ export default function PlacementsPanel() {
                 <span className="plc-label">Tournament title</span>
                 <input className="input" value={inputs.title} placeholder="AEROLS" onChange={(e) => set("title", e.target.value)} />
               </label>
-              <label className="plc-field plc-wide">
-                <span className="plc-label">Referee sheet (Google Sheets link, must be link-viewable)</span>
-                <input
-                  className="input"
-                  value={inputs.sheet_url}
-                  placeholder="https://docs.google.com/spreadsheets/d/…/edit"
-                  onChange={(e) => set("sheet_url", e.target.value)}
-                />
-              </label>
-              <label className="plc-field">
-                <span className="plc-label">Schedule tab</span>
-                <input className="input" value={inputs.sheet_tab} placeholder="Chrono Schedule" onChange={(e) => set("sheet_tab", e.target.value)} />
-              </label>
+              <div className="plc-field plc-wide">
+                <span className="plc-label">Referee sheet</span>
+                <div className="lock-row">
+                  <div className="tabs">
+                    <button className={`tab ${inputs.source === "link" ? "active" : ""}`} onClick={() => set("source", "link")}>
+                      Google Sheets link
+                    </button>
+                    <button className={`tab ${inputs.source === "upload" ? "active" : ""}`} onClick={() => set("source", "upload")}>
+                      Upload .xlsx
+                    </button>
+                  </div>
+                  <span className="hint">
+                    {inputs.source === "link"
+                      ? "The sheet must be “anyone with the link can view”."
+                      : "File → Download → Microsoft Excel (.xlsx). Set the tab name first; re-upload after the sheet changes."}
+                  </span>
+                </div>
+                {inputs.source === "link" ? (
+                  <input
+                    className="input"
+                    value={inputs.sheet_url}
+                    placeholder="https://docs.google.com/spreadsheets/d/…/edit"
+                    onChange={(e) => set("sheet_url", e.target.value)}
+                  />
+                ) : (
+                  <div className="lock-row">
+                    <label className={`btn ghost ${previewBusy || !user ? "plc-disabled" : ""}`} style={{ cursor: "pointer" }}>
+                      {previewBusy ? "Reading…" : "Choose .xlsx…"}
+                      <input
+                        type="file"
+                        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        style={{ display: "none" }}
+                        disabled={previewBusy || !user}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = "";
+                          if (f) void uploadFile(f);
+                        }}
+                      />
+                    </label>
+                    <span className="hint">
+                      {inputs.schedule_rows?.length
+                        ? `Loaded “${inputs.sheet_tab}” from ${inputs.schedule_file ?? "the upload"} (${inputs.schedule_rows.length} rows).`
+                        : "No file loaded yet."}
+                    </span>
+                  </div>
+                )}
+              </div>
               <label className="plc-field plc-wide">
                 <span className="plc-label">
                   Mappool — manual input, one slot per line: label + beatmap ids/urls, <b>upper (Tier 1) difficulty first, lower (Tier 2) second</b>{" "}
@@ -366,8 +442,8 @@ export default function PlacementsPanel() {
               </label>
             </div>
             <div className="lock-row" style={{ marginTop: 10 }}>
-              <button className="btn ghost" disabled={previewBusy || !user || !inputs.sheet_url.trim()} onClick={readSheet}>
-                {previewBusy ? "Reading…" : "Read sheet"}
+              <button className="btn ghost" disabled={previewBusy || !user || !hasSchedule} onClick={() => void readSheet()}>
+                {previewBusy ? "Reading…" : inputs.source === "upload" ? "Re-check" : "Read sheet"}
               </button>
               <span className="hint">Parses the schedule tab and the pool without touching the osu! API.</span>
             </div>

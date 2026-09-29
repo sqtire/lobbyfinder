@@ -1,33 +1,28 @@
 import { getSessionUser } from "@/lib/auth";
 import { bad, json, readJson } from "@/lib/api";
 import { parsePool } from "@/lib/placements/pool";
-import { fetchSheetTabCsv, parseSchedule } from "@/lib/placements/schedule";
+import { fetchScheduleTable, parseScheduleTable, sanitizeTable } from "@/lib/placements/schedule";
 import type { PreviewResponse } from "@/lib/placements/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Reads the schedule tab and parses the pool text WITHOUT touching the osu!
- * API, so the panel can show which stages exist (and their formats) before a
- * run is started. Signed-in users only (it fetches a Google sheet).
+ * Reads the schedule tab (linked sheet or uploaded rows) and parses the pool
+ * text WITHOUT touching the osu! API, so the panel can show which stages exist
+ * (and their formats) before a run is started. Signed-in users only.
  */
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return bad("sign in required", 401);
-  const body = (await readJson<{ sheet_url?: string; sheet_tab?: string; pool_text?: string }>(req)) ?? {};
+  const body = (await readJson<{ sheet_url?: string; sheet_tab?: string; pool_text?: string; schedule_rows?: unknown }>(req)) ?? {};
+  const uploaded = sanitizeTable(body.schedule_rows);
   const url = typeof body.sheet_url === "string" ? body.sheet_url.trim() : "";
-  if (!/docs\.google\.com\/spreadsheets\/d\//.test(url)) return bad("Paste the referee sheet's Google Sheets link.");
+  if (!uploaded && !/docs\.google\.com\/spreadsheets\/d\//.test(url)) return bad("Paste the referee sheet's Google Sheets link, or upload the sheet as .xlsx.");
   const tab = (typeof body.sheet_tab === "string" ? body.sheet_tab : "").trim() || "Chrono Schedule";
-  let csv: string;
-  try {
-    csv = await fetchSheetTabCsv(url, tab);
-  } catch (e) {
-    return bad((e as Error).message);
-  }
   let schedule;
   try {
-    schedule = parseSchedule(csv);
+    schedule = parseScheduleTable(uploaded ?? (await fetchScheduleTable(url, tab)));
   } catch (e) {
     return bad((e as Error).message);
   }
